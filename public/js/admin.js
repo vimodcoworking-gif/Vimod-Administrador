@@ -101,7 +101,7 @@ $('#menuMovil').addEventListener('click', () => $('#app').classList.toggle('menu
 // ---- Navegación ----
 const rutas = {
   resumen: vistaResumen, usuarios: vistaUsuarios, usuario: vistaUsuario,
-  sistemas: vistaSistemas, sistema: vistaSistema, contenido: vistaContenido,
+  sistemas: vistaSistemas, sistema: vistaSistema, contenido: vistaContenido, servidor: vistaServidor,
   solicitudes: vistaSolicitudes, mensajes: vistaMensajes
 };
 let hashAnterior = location.hash;
@@ -225,8 +225,13 @@ async function vistaUsuarios() {
 }
 
 async function vistaUsuario(id) {
-  const [{ usuario: u, licencias, solicitudes }] = await Promise.all([api('/usuarios/' + id), cargarSistemas()]);
-  vistaActual = { usuario: u, licencias: new Map(licencias.map((l) => [l._id, l])) };
+  const [{ usuario: u, licencias, solicitudes, empresas = [] }] = await Promise.all([api('/usuarios/' + id), cargarSistemas()]);
+  vistaActual = {
+    usuario: u,
+    licencias: new Map(licencias.map((l) => [l._id, l])),
+    empresas: new Map(empresas.map((e) => [e._id, e]))
+  };
+  const licConEmpresa = new Set(empresas.map((e) => String(e.licencia || '')));
 
   const filasLic = licencias.map((l) => `
     <tr>
@@ -239,6 +244,7 @@ async function vistaUsuario(id) {
       <td data-col="Usuarios">${l.maxUsuarios || 'Ilimitados'}</td>
       <td data-col="Estado">${insignia(l.estadoReal || l.estado)}</td>
       <td data-col="Acciones"><div class="acciones">
+        ${licConEmpresa.has(String(l._id)) ? '' : `<button class="btn btn--chico" data-accion="nueva-empresa" data-licencia="${esc(l._id)}" title="Crear el sistema VIMOD CONTROL de esta empresa en el servidor">Crear sistema</button>`}
         <button class="btn btn--borde btn--chico" data-accion="editar-licencia" data-id="${esc(l._id)}">Editar</button>
         <button class="btn btn--peligro btn--chico" data-accion="eliminar-licencia" data-id="${esc(l._id)}">Eliminar</button>
       </div></td>
@@ -275,9 +281,212 @@ async function vistaUsuario(id) {
       <button class="btn btn--chico" data-accion="nueva-licencia">+ Asignar licencia</button>
     </div>
     ${tabla(['Software', 'Plan', 'Precio', 'Clave', 'Inicio', 'Vence', 'Usuarios', 'Estado', ''], filasLic || filaVacia(9,'Este usuario aún no tiene licencias.'))}
+    <div class="cabecera" style="margin:40px 0 16px">
+      <h2 class="subtitulo" style="margin:0">Sistema de empresa (servidor)</h2>
+      <button class="btn btn--chico" data-accion="nueva-empresa">+ Crear sistema de empresa</button>
+    </div>
+    <div class="empresas">${empresas.map(tarjetaEmpresa).join('') || '<p class="texto-gris">Este cliente aún no tiene su sistema. Créalo con el botón o desde una de sus licencias.</p>'}</div>
     <h2 class="subtitulo">Solicitudes con este correo</h2>
     ${tabla(['Fecha', 'Software', 'Plan', 'Estado'], filasSol || filaVacia(4, 'Sin solicitudes.'))}
     ${acceso}`;
+}
+
+// ---- Sistemas de empresa (VIMOD CONTROL en el servidor) ----
+const slugDe = (t) => String(t || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
+  .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 24).replace(/-+$/, '');
+const ESTADO_EMPRESA = { pendiente: 'Creándose…', lista: 'Creada', error: 'Error' };
+
+function textoLicenciaEmpresa(e) {
+  const l = e.licenciaServidor;
+  if (!l || !l.estado) return e.vence ? `Vence ${fechaDia(e.vence)}` : '—';
+  if (l.estado !== 'activa') return 'Suspendida';
+  const dias = Number(l.dias);
+  return `Vence ${fechaDia(l.vence)}${Number.isFinite(dias) ? ` · ${dias < 0 ? 'vencida' : `${dias} día${dias === 1 ? '' : 's'}`}` : ''}`;
+}
+
+function tarjetaEmpresa(e) {
+  const lista = e.estado === 'lista';
+  const activa = e.licenciaServidor?.estado !== 'suspendida';
+  return `
+    <article class="empresa">
+      <div class="empresa__cabecera">
+        <div><h3>${esc(e.nombre)}</h3><span class="texto-gris">Código: ${esc(e.slug)}</span></div>
+        <span class="insignia insignia--${e.estado === 'lista' ? (activa && e.licenciaServidor?.vigente !== false ? 'activa' : 'suspendida') : e.estado}">${
+          esc(lista ? (activa ? (e.licenciaServidor?.vigente === false ? 'Vencida' : 'Activa') : 'Suspendida') : ESTADO_EMPRESA[e.estado])}</span>
+      </div>
+      ${e.estado === 'error' ? `<p class="empresa__error">${esc(e.error)}</p>` : ''}
+      ${e.estado === 'pendiente' ? '<p class="texto-gris">El servidor lo creará en el próximo minuto (si el agente está encendido).</p>' : ''}
+      <ul class="empresa__datos">
+        ${e.url ? `<li><b>Dirección</b><a href="${esc(e.url)}" target="_blank" rel="noopener">${esc(e.url)}</a></li>` : ''}
+        <li><b>Administrador</b>${esc(e.adminUsuario || 'admin')}</li>
+        <li><b>Licencia</b>${esc(textoLicenciaEmpresa(e))}</li>
+        ${e.baseDatos ? `<li><b>Base de datos</b>${esc(e.baseDatos)}</li>` : ''}
+        ${e.claveVista ? `<li><b>Contraseña</b>El cliente la vio el ${fecha(e.claveVista)}</li>` : ''}
+      </ul>
+      <div class="acciones">
+        ${lista && e.url ? `<a class="btn btn--chico" href="${esc(e.url)}" target="_blank" rel="noopener">Abrir ↗</a>` : ''}
+        ${lista && e.tieneClave ? `<button class="btn btn--borde btn--chico" data-accion="ver-clave-empresa" data-id="${esc(e._id)}">Ver contraseña</button>` : ''}
+        ${lista ? `<button class="btn btn--borde btn--chico" data-accion="renovar-empresa" data-id="${esc(e._id)}">Renovar</button>
+          <button class="btn btn--borde btn--chico" data-accion="estado-empresa" data-id="${esc(e._id)}" data-estado="${activa ? 'suspendida' : 'activa'}">${activa ? 'Suspender' : 'Reactivar'}</button>
+          <button class="btn btn--borde btn--chico" data-accion="actualizar-empresa" data-id="${esc(e._id)}" title="Pasar a esta empresa los cambios de la plantilla">Actualizar</button>` : ''}
+        ${e.estado === 'error' ? `<button class="btn btn--chico" data-accion="reintentar-empresa" data-id="${esc(e._id)}">Reintentar</button>` : ''}
+        ${!lista ? `<button class="btn btn--peligro btn--chico" data-accion="quitar-empresa" data-id="${esc(e._id)}">Quitar</button>` : ''}
+      </div>
+    </article>`;
+}
+
+async function vistaServidor() {
+  const s = await api('/estado-servidor');
+  vistaActual = { empresas: new Map(s.empresas.map((e) => [e._id, e])) };
+  const ultimo = s.agente?.ultimoContacto ? new Date(s.agente.ultimoContacto) : null;
+  const minutos = ultimo ? Math.round((Date.now() - ultimo) / 60000) : null;
+  const conectado = minutos !== null && minutos <= 3;
+  const avisos = [
+    !s.agenteConfigurado && 'Falta la variable <b>AGENTE_TOKEN</b> (48+ caracteres) en Render: el servidor no puede conectarse.',
+    !s.cifradoConfigurado && 'Falta la variable <b>CIFRADO_SECRETO</b> (32+ caracteres) en Render: sin ella no se pueden guardar las contraseñas de las empresas.',
+    s.agenteConfigurado && !conectado && (ultimo
+      ? `El servidor no se comunica desde hace ${minutos} minutos. Revisa la tarea programada del agente.`
+      : 'El servidor todavía no se ha conectado. Instala el agente (ver LEEME de vimod-empresas).')
+  ].filter(Boolean);
+
+  const filas = s.empresas.map((e) => `
+    <tr>
+      <td data-col="Empresa">${esc(e.nombre)}<small>${esc(e.slug)}</small></td>
+      <td data-col="Cliente">${e.usuario ? `<a href="#/usuarios/${esc(e.usuario._id)}">${esc(e.usuario.nombre)}</a><small>${esc(e.usuario.email)}</small>`
+        : `<button class="btn btn--borde btn--chico" data-accion="vincular-empresa" data-id="${esc(e._id)}">Vincular cliente</button>`}</td>
+      <td data-col="Estado">${insignia({ pendiente: 'pendiente', lista: 'activo', error: 'inactivo' }[e.estado])} <small>${esc(ESTADO_EMPRESA[e.estado])}</small></td>
+      <td data-col="Licencia">${esc(textoLicenciaEmpresa(e))}</td>
+      <td data-col="Dirección">${e.url ? `<a href="${esc(e.url)}" target="_blank" rel="noopener">Abrir ↗</a>` : '—'}</td>
+    </tr>`).join('');
+  const TAREA = { crear: 'Crear empresa', licencia: 'Licencia', actualizar: 'Actualizar' };
+  const filasTareas = s.tareas.map((t) => `
+    <tr>
+      <td data-col="Fecha">${fecha(t.createdAt)} <small>${new Date(t.createdAt).toLocaleTimeString('es', { hour: '2-digit', minute: '2-digit' })}</small></td>
+      <td data-col="Tarea">${esc(TAREA[t.tipo] || t.tipo)}<small>${esc(t.empresa?.nombre || t.datos?.slug || '')}</small></td>
+      <td data-col="Estado">${insignia({ pendiente: 'pendiente', enviada: 'contactado', hecha: 'atendida', error: 'descartada' }[t.estado])}
+        <small>${esc({ pendiente: 'Esperando', enviada: 'En el servidor', hecha: 'Hecha', error: 'Error' }[t.estado])}</small></td>
+      <td data-col="Detalle">${t.error ? `<span class="empresa__error">${esc(t.error)}</span>` : t.resultado?.licencia ? esc(`Licencia ${t.resultado.licencia.estado} hasta ${t.resultado.licencia.vence}`) : ''}</td>
+    </tr>`).join('');
+
+  return `
+    ${cabecera('Servidor VIMOD CONTROL', 'Sistemas de <strong>empresas</strong>', '<button class="btn" data-accion="nueva-empresa">+ Crear sistema</button>')}
+    <div class="tiles">
+      <div class="tile"><b>${conectado ? 'Conectado' : 'Sin conexión'}</b><span>${ultimo ? `Último contacto: ${ultimo.toLocaleString('es')}` : 'Agente del servidor'}${s.agente?.servidor ? ` · ${esc(s.agente.servidor)}` : ''}</span></div>
+      <div class="tile"><b>${s.empresas.filter((e) => e.estado === 'lista').length}</b><span>Empresas creadas</span></div>
+      <div class="tile"><b>${s.empresas.filter((e) => e.estado === 'pendiente').length}</b><span>Creándose</span></div>
+    </div>
+    ${avisos.length ? `<div class="aviso-caja">${avisos.map((x) => `<p>${x}</p>`).join('')}</div>` : ''}
+    <h2 class="subtitulo">Empresas</h2>
+    ${tabla(['Empresa', 'Cliente', 'Estado', 'Licencia', 'Dirección'], filas || filaVacia(5, 'Aún no hay sistemas de empresa.'))}
+    <h2 class="subtitulo">Últimas tareas del servidor</h2>
+    ${tabla(['Fecha', 'Tarea', 'Estado', 'Detalle'], filasTareas || filaVacia(4, 'Sin tareas todavía.'))}`;
+}
+
+async function formEmpresa({ licenciaId } = {}) {
+  let u = vistaActual.usuario || null;
+  let usuarios = [];
+  if (!u) usuarios = await api('/usuarios');
+  const lic = u && licenciaId ? vistaActual.licencias.get(licenciaId) : null;
+  const licencias = u ? [...vistaActual.licencias.values()] : [];
+  const vence = lic?.fechaVencimiento ? aInput(lic.fechaVencimiento) : sumarMeses(hoy(), lic?.periodo === 'mes' ? 1 : 12);
+  const plan = lic?.periodo === 'mes' ? 'mensual' : lic?.periodo === 'año' ? 'anual' : 'anual';
+  const nombre = u?.empresa || u?.nombre || '';
+  abrirModal(`
+    <span class="etiqueta">Servidor VIMOD CONTROL</span>
+    <h2 class="titulo">Crear sistema <strong>de empresa</strong></h2>
+    <p class="texto-gris" style="margin-bottom:16px">Se crea en el servidor su propio VIMOD CONTROL: carpeta, base de datos y administrador. Tarda alrededor de un minuto.</p>
+    <form class="form" id="formEmpresa">
+      ${u ? `<input type="hidden" name="usuario" value="${esc(u._id)}">`
+        : `<div class="campo"><label>Cliente</label><select name="usuario"><option value="">(sin cliente, vincular después)</option>${opciones(usuarios.map((x) => [x._id, `${x.nombre} · ${x.email}`]), '')}</select></div>`}
+      ${u ? `<div class="campo"><label>Licencia vinculada (renovarla renueva el sistema)</label><select name="licencia">
+          <option value="">(ninguna)</option>${opciones(licencias.map((l) => [l._id, `${l.sistemaNombre} · ${l.planNombre}${l.fechaVencimiento ? ' · vence ' + fechaDia(l.fechaVencimiento) : ''}`]), licenciaId || '')}</select></div>` : ''}
+      <div class="form__fila">
+        <div class="campo"><label>Nombre de la empresa</label><input name="nombre" required maxlength="150" value="${esc(nombre)}" data-slug-origen></div>
+        <div class="campo"><label>Código (en la dirección)</label><input name="slug" required maxlength="24" pattern="[a-z0-9-]+" value="${esc(slugDe(nombre))}" data-slug>
+          <small class="ayuda">Minúsculas, números y guiones. No se puede cambiar después.</small></div>
+      </div>
+      <div class="form__fila">
+        <div class="campo"><label>Vence</label><input name="vence" type="date" required value="${vence}"></div>
+        <div class="campo"><label>Plan</label><select name="plan">${opciones([['mensual', 'Mensual'], ['anual', 'Anual'], ['pago unico', 'Pago único']], plan)}</select></div>
+      </div>
+      <div class="form__fila form__fila--3">
+        <div class="campo"><label>Usuario admin</label><input name="adminUsuario" value="admin" maxlength="40"></div>
+        <div class="campo"><label>Nombre del admin</label><input name="adminNombre" maxlength="120" value="${esc(u?.nombre || '')}"></div>
+        <div class="campo"><label>Correo del admin</label><input name="adminEmail" type="email" maxlength="160" value="${esc(u?.email || '')}"></div>
+      </div>
+      <button class="btn" type="submit">Crear sistema</button>
+      <p class="estado" role="status"></p>
+    </form>`,
+  async (datos) => {
+    if (!u && !datos.usuario) delete datos.usuario;
+    if (!datos.licencia) delete datos.licencia;
+    await api('/empresas', { method: 'POST', body: datos });
+    cerrarModal();
+    aviso('Pedido enviado: el servidor creará el sistema en el próximo minuto.');
+    recargar();
+  });
+}
+
+function formRenovar(e) {
+  const base = e.licenciaServidor?.vence || e.vence || hoy();
+  const desde = base < hoy() ? hoy() : base;
+  abrirModal(`
+    <span class="etiqueta">${esc(e.nombre)}</span>
+    <h2 class="titulo">Renovar <strong>sistema</strong></h2>
+    <p class="texto-gris" style="margin-bottom:16px">Vence actualmente: ${fechaDia(base)}. ${e.licencia ? 'También se actualiza la licencia vinculada del cliente.' : ''}</p>
+    <form class="form">
+      <div class="acciones">
+        ${[[1, '+1 mes'], [3, '+3 meses'], [6, '+6 meses'], [12, '+1 año'], [24, '+2 años']].map(([m, t]) =>
+          `<button class="btn btn--borde btn--chico" type="button" data-accion="renovar-mas" data-meses="${m}" data-desde="${desde}">${t}</button>`).join('')}
+      </div>
+      <div class="campo"><label>Nueva fecha de vencimiento</label><input name="vence" type="date" required value="${sumarMeses(desde, 12)}"></div>
+      <label class="check"><input type="checkbox" name="activar" checked> Dejarlo activo (si estaba suspendido, se reactiva)</label>
+      <button class="btn" type="submit">Renovar</button>
+      <p class="estado" role="status"></p>
+    </form>`,
+  async (datos) => {
+    await api(`/empresas/${e._id}/licencia`, { method: 'POST', body: { vence: datos.vence, estado: datos.activar ? 'activa' : undefined } });
+    cerrarModal();
+    aviso('Renovación enviada: se aplica en el servidor en el próximo minuto.');
+    recargar();
+  });
+}
+
+async function formVincular(e) {
+  const usuarios = await api('/usuarios');
+  abrirModal(`
+    <span class="etiqueta">${esc(e.nombre)}</span>
+    <h2 class="titulo">Vincular <strong>cliente</strong></h2>
+    <form class="form">
+      <div class="campo"><label>Cliente</label><select name="usuario" required><option value="">Elige un cliente…</option>${opciones(usuarios.map((x) => [x._id, `${x.nombre} · ${x.email}`]), '')}</select></div>
+      <button class="btn" type="submit">Vincular</button>
+      <p class="estado" role="status"></p>
+    </form>`,
+  async (datos) => {
+    if (!datos.usuario) throw new Error('Elige un cliente');
+    await api('/empresas/' + e._id, { method: 'PUT', body: { usuario: datos.usuario } });
+    cerrarModal();
+    aviso('Empresa vinculada: el cliente ya la ve en su cuenta.');
+    recargar();
+  });
+}
+
+async function verClaveEmpresa(e) {
+  const r = await api(`/empresas/${e._id}/clave`);
+  const texto = `Tu sistema VIMOD\nDirección: ${r.url}\nUsuario: ${r.usuario}\nContraseña: ${r.clave}\nCámbiala al entrar (Configuración → contraseña).`;
+  abrirModal(`
+    <span class="etiqueta">${esc(e.nombre)}</span>
+    <h2 class="titulo">Acceso del <strong>administrador</strong></h2>
+    <div class="credenciales">
+      <div>Dirección: <code>${esc(r.url)}</code></div>
+      <div>Usuario: <code>${esc(r.usuario)}</code></div>
+      <div>Contraseña: <code>${esc(r.clave)}</code></div>
+    </div>
+    <p class="texto-gris" style="margin:14px 0">El cliente también la ve en “Mi cuenta”. Cuando confirme que la cambió, puedes borrarla del Panel.</p>
+    <div class="acciones">
+      <button class="btn" type="button" data-accion="copiar" data-copiar="${esc(texto)}">Copiar datos</button>
+      <button class="btn btn--peligro" type="button" data-accion="borrar-clave-empresa" data-id="${esc(e._id)}">Borrar contraseña guardada</button>
+    </div>`);
 }
 
 // ---- Softwares y planes ----
@@ -930,6 +1139,33 @@ const acciones = {
       '/usuarios/' + u._id, 'Usuario eliminado', () => { location.hash = '#/usuarios'; });
   },
   'nueva-licencia': () => formLicencia(null),
+  'nueva-empresa': (el) => formEmpresa({ licenciaId: el.dataset.licencia }),
+  'ver-clave-empresa': (el) => verClaveEmpresa(vistaActual.empresas.get(el.dataset.id)),
+  'borrar-clave-empresa': (el) => {
+    if (!confirm('¿Borrar la contraseña guardada? Ni tú ni el cliente podrán volver a verla aquí.')) return;
+    return api(`/empresas/${el.dataset.id}/clave`, { method: 'DELETE' }).then(() => { cerrarModal(); aviso('Contraseña borrada del Panel'); recargar(); });
+  },
+  'renovar-empresa': (el) => formRenovar(vistaActual.empresas.get(el.dataset.id)),
+  'renovar-mas': (el) => { el.closest('form').vence.value = sumarMeses(el.dataset.desde, Number(el.dataset.meses)); },
+  'estado-empresa': async (el) => {
+    const suspender = el.dataset.estado === 'suspendida';
+    if (suspender && !confirm('¿Suspender el sistema de esta empresa? Nadie podrá entrar hasta que lo reactives.')) return;
+    await api(`/empresas/${el.dataset.id}/licencia`, { method: 'POST', body: { estado: el.dataset.estado } });
+    aviso(suspender ? 'Suspensión enviada al servidor' : 'Reactivación enviada al servidor');
+    recargar();
+  },
+  'actualizar-empresa': async (el) => {
+    await api(`/empresas/${el.dataset.id}/actualizar`, { method: 'POST' });
+    aviso('Actualización enviada al servidor');
+    recargar();
+  },
+  'reintentar-empresa': async (el) => {
+    await api(`/empresas/${el.dataset.id}/reintentar`, { method: 'POST' });
+    aviso('Se volverá a intentar en el próximo minuto');
+    recargar();
+  },
+  'quitar-empresa': (el) => confirmarYBorrar('¿Quitar este pedido? (No se creó en el servidor.)', '/empresas/' + el.dataset.id, 'Pedido quitado'),
+  'vincular-empresa': (el) => formVincular(vistaActual.empresas.get(el.dataset.id)),
   'editar-licencia': (el) => formLicencia(vistaActual.licencias.get(el.dataset.id)),
   'eliminar-licencia': (el) => confirmarYBorrar('¿Eliminar esta licencia? El cliente dejará de verla.', '/licencias/' + el.dataset.id, 'Licencia eliminada'),
   'eliminar-sistema': (el) => confirmarYBorrar(`¿Eliminar "${el.dataset.nombre}"? Desaparecerá de la página.`, '/sistemas/' + el.dataset.id, 'Software eliminado'),
@@ -1026,6 +1262,12 @@ document.addEventListener('input', (e) => {
   const el = e.target;
   if (el.closest('.editor')) hayCambios = true;
   if (el.matches('[data-precio]')) el.dataset.editado = el.value === '' ? '' : '1'; // precio a mano: no recalcular
+  // Código de la empresa: se sugiere a partir del nombre hasta que se escriba a mano
+  if (el.matches('[data-slug]')) el.dataset.editado = '1';
+  if (el.matches('[data-slug-origen]')) {
+    const slug = $('[data-slug]', el.form);
+    if (slug && !slug.dataset.editado) slug.value = slugDe(el.value);
+  }
   if (el.matches('[data-imagen]')) {
     clearTimeout(tVista);
     tVista = setTimeout(() => vistaPrevia(el), 400);

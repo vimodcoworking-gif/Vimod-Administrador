@@ -165,6 +165,21 @@ a.tile:hover { border-color: var(--gris); }
 
 .cargando { color: var(--gris); padding: 40px 0; }
 
+/* ===== Sistemas de empresa ===== */
+.empresas { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; }
+.empresa { border: 1px solid var(--gris-oscuro); background: var(--carbon); padding: 22px; display: grid; gap: 14px; align-content: start; }
+.empresa__cabecera { display: flex; justify-content: space-between; align-items: start; gap: 12px; }
+.empresa__cabecera h3 { font-size: 1.1rem; font-weight: 600; }
+.empresa__cabecera .texto-gris { font-size: .75rem; }
+.empresa__datos { list-style: none; display: grid; gap: 8px; font-size: .85rem; }
+.empresa__datos li { overflow-wrap: anywhere; }
+.empresa__datos b { display: block; font-size: .58rem; letter-spacing: .18em; text-transform: uppercase; color: var(--gris); font-weight: 500; }
+.empresa__datos a { border-bottom: 1px solid var(--gris-oscuro); }
+.empresa__error { color: #ff8a8a; font-size: .82rem; }
+.aviso-caja { margin: 18px 0 4px; border: 1px solid var(--gris); border-left: 3px solid var(--blanco); background: var(--grafito); padding: 14px 18px; display: grid; gap: 6px; font-size: .88rem; }
+.insignia--pendiente { border-style: dotted; }
+.insignia--error { border-color: #5a2a2a; color: #ff8a8a; }
+
 /* ===== Editores (software y contenido web) ===== */
 .editor { display: grid; gap: 22px; max-width: 980px; }
 .editor__bloque { border: 1px solid var(--gris-oscuro); background: var(--carbon); padding: 26px 26px 28px; display: grid; gap: 16px; }

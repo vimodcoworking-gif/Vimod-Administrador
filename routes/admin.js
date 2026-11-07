@@ -9,6 +9,9 @@ const Solicitud = require('../models/Solicitud');
 const Contacto = require('../models/Contacto');
 const Contenido = require('../models/Contenido');
 const Imagen = require('../models/Imagen');
+const Empresa = require('../models/Empresa');
+const Tarea = require('../models/Tarea');
+const cifrado = require('../lib/cifrado');
 const sitio = require('../lib/sitio');
 const auth = require('../lib/auth');
 
@@ -152,7 +155,8 @@ router.get('/usuarios/:id', idValido, a(async (req, res) => {
     Licencia.find({ usuario: usuario._id }).populate('sistema', 'nombre url planes').sort('-createdAt'),
     Solicitud.find({ email: usuario.email }).populate('sistema', 'nombre planes').sort('-createdAt').limit(20)
   ]);
-  res.json({ usuario, licencias: licencias.map(conNombres), solicitudes: solicitudes.map(conNombres) });
+  const empresas = await Empresa.find({ usuario: usuario._id }).select('+adminClave').sort('-createdAt').lean();
+  res.json({ usuario, licencias: licencias.map(conNombres), solicitudes: solicitudes.map(conNombres), empresas: empresas.map(empresaPublica) });
 }));
 
 router.post('/usuarios', a(async (req, res) => {
@@ -180,6 +184,8 @@ router.delete('/usuarios/:id', idValido, a(async (req, res) => {
   const usuario = await Usuario.findByIdAndDelete(req.params.id);
   if (!usuario) return res.status(404).json({ error: 'Usuario no encontrado' });
   await Licencia.deleteMany({ usuario: usuario._id });
+  // Su sistema de empresa sigue en el servidor: queda sin cliente para volver a vincularlo.
+  await Empresa.updateMany({ usuario: usuario._id }, { usuario: null, licencia: null });
   res.json({ ok: true });
 }));
 
@@ -225,13 +231,182 @@ router.put('/licencias/:id', idValido, a(async (req, res) => {
     const error = await validarSistemaYPlan(d.sistema ?? actual.sistema, d.plan ?? actual.plan);
     if (error) return res.status(400).json({ error });
   }
+  const antes = { vence: aDia(actual.fechaVencimiento), estado: actual.estado };
   actual.set(d);
-  res.json(await actual.save());
+  const guardada = await actual.save();
+  // Si la licencia está vinculada al sistema de una empresa, el servidor recibe el cambio.
+  const despues = { vence: aDia(guardada.fechaVencimiento), estado: guardada.estado };
+  if (antes.vence !== despues.vence || antes.estado !== despues.estado) {
+    for (const e of await Empresa.find({ licencia: guardada._id, estado: 'lista' })) {
+      await pedirLicencia(e, { estado: despues.estado === 'activa' ? 'activa' : 'suspendida', vence: despues.vence || undefined });
+    }
+  }
+  res.json(guardada);
 }));
 
 router.delete('/licencias/:id', idValido, a(async (req, res) => {
   const r = await Licencia.findByIdAndDelete(req.params.id);
   if (!r) return res.status(404).json({ error: 'Licencia no encontrada' });
+  res.json({ ok: true });
+}));
+
+// ---- Sistemas de empresa (servidor de VIMOD CONTROL) ----
+const SLUG_EMPRESA = /^[a-z0-9]([a-z0-9-]{0,22}[a-z0-9])?$/;
+const aDia = (d) => (d ? new Date(d).toISOString().slice(0, 10) : null);
+const planServidor = (periodo) => ({ 'año': 'anual', mes: 'mensual' }[periodo] || txt(periodo, 40) || 'mensual');
+
+function empresaPublica(e) {
+  const o = e.toObject ? e.toObject() : { ...e };
+  const tieneClave = !!o.adminClave;
+  delete o.adminClave;
+  return { ...o, tieneClave };
+}
+
+async function pedirLicencia(empresa, datos) {
+  const d = { slug: empresa.slug };
+  if (datos.estado) d.estado = datos.estado === 'activa' ? 'activa' : 'suspendida';
+  if (datos.vence) d.vence = datos.vence;
+  if (datos.plan) d.plan = datos.plan;
+  if (d.vence) await Empresa.updateOne({ _id: empresa._id }, { vence: d.vence });
+  return Tarea.create({ tipo: 'licencia', datos: d, empresa: empresa._id });
+}
+
+// (No usar /servidor: ese prefijo es del agente, routes/servidor.js)
+router.get('/estado-servidor', a(async (req, res) => {
+  const [agente, empresas, tareas] = await Promise.all([
+    Contenido.findById('agente').lean(),
+    Empresa.find().select('+adminClave').populate('usuario', 'nombre email').sort('-createdAt').lean(),
+    Tarea.find().populate('empresa', 'nombre slug').sort('-createdAt').limit(30).lean()
+  ]);
+  res.json({
+    agente: agente ? agente.datos : null,
+    agenteConfigurado: (process.env.AGENTE_TOKEN || '').length >= 48,
+    cifradoConfigurado: cifrado.disponible(),
+    empresas: empresas.map(empresaPublica),
+    tareas
+  });
+}));
+
+router.post('/empresas', a(async (req, res) => {
+  const b = req.body || {};
+  const slug = txt(b.slug, 24).toLowerCase();
+  if (!SLUG_EMPRESA.test(slug)) return res.status(400).json({ error: 'El código solo puede tener minúsculas, números y guiones (máx. 24), por ejemplo "coworking".' });
+  if (await Empresa.exists({ slug })) return res.status(409).json({ error: `Ya existe una empresa con el código "${slug}".` });
+  const nombre = txt(b.nombre, 150);
+  if (!nombre) return res.status(400).json({ error: 'Escribe el nombre de la empresa' });
+  const vence = /^\d{4}-\d{2}-\d{2}$/.test(b.vence || '') ? b.vence : null;
+  if (!vence) return res.status(400).json({ error: 'Elige la fecha de vencimiento' });
+  const adminUsuario = txt(b.adminUsuario, 40).toLowerCase() || 'admin';
+  if (!/^[a-z0-9._-]{3,40}$/.test(adminUsuario)) return res.status(400).json({ error: 'El usuario administrador solo puede tener letras, números, punto, guion y guion bajo (3 a 40).' });
+  const adminEmail = txt(b.adminEmail, 160).toLowerCase();
+  if (adminEmail && !/.+@.+\..+/.test(adminEmail)) return res.status(400).json({ error: 'El correo del administrador no es válido' });
+
+  const usuario = mongoose.isValidObjectId(b.usuario) ? await Usuario.findById(b.usuario) : null;
+  if (b.usuario && !usuario) return res.status(400).json({ error: 'Cliente no válido' });
+  const licencia = mongoose.isValidObjectId(b.licencia) ? await Licencia.findById(b.licencia) : null;
+  if (licencia && usuario && String(licencia.usuario) !== String(usuario._id)) return res.status(400).json({ error: 'La licencia es de otro cliente' });
+
+  const empresa = await Empresa.create({
+    usuario: usuario ? usuario._id : null,
+    licencia: licencia ? licencia._id : null,
+    nombre, slug, vence,
+    plan: txt(b.plan, 40) || 'mensual',
+    adminUsuario,
+    adminNombre: txt(b.adminNombre, 120) || 'Administrador',
+    adminEmail
+  });
+  await Tarea.create({
+    tipo: 'crear',
+    empresa: empresa._id,
+    datos: {
+      nombre, slug, vence, plan: empresa.plan,
+      admin_usuario: adminUsuario, admin_nombre: empresa.adminNombre, admin_email: adminEmail
+    }
+  });
+  res.status(201).json(empresaPublica(empresa));
+}));
+
+// Vincular a un cliente y/o a una licencia
+router.put('/empresas/:id', idValido, a(async (req, res) => {
+  const e = await Empresa.findById(req.params.id);
+  if (!e) return res.status(404).json({ error: 'Empresa no encontrada' });
+  if ('usuario' in req.body) {
+    const u = req.body.usuario ? await Usuario.findById(req.body.usuario) : null;
+    if (req.body.usuario && !u) return res.status(400).json({ error: 'Cliente no válido' });
+    e.usuario = u ? u._id : null;
+    if (!u) e.licencia = null;
+  }
+  if ('licencia' in req.body) {
+    const l = req.body.licencia ? await Licencia.findById(req.body.licencia) : null;
+    if (req.body.licencia && (!l || String(l.usuario) !== String(e.usuario))) return res.status(400).json({ error: 'La licencia no es de este cliente' });
+    e.licencia = l ? l._id : null;
+  }
+  if (req.body.nombre !== undefined) e.nombre = txt(req.body.nombre, 150) || e.nombre;
+  res.json(empresaPublica(await e.save()));
+}));
+
+// Renovar / suspender / reactivar
+router.post('/empresas/:id/licencia', idValido, a(async (req, res) => {
+  const e = await Empresa.findById(req.params.id);
+  if (!e) return res.status(404).json({ error: 'Empresa no encontrada' });
+  if (e.estado !== 'lista') return res.status(409).json({ error: 'El sistema de esta empresa todavía no está creado en el servidor' });
+  const vence = /^\d{4}-\d{2}-\d{2}$/.test(req.body.vence || '') ? req.body.vence : undefined;
+  const estado = ['activa', 'suspendida'].includes(req.body.estado) ? req.body.estado : undefined;
+  if (!vence && !estado) return res.status(400).json({ error: 'Indica la nueva fecha o el estado' });
+  const tarea = await pedirLicencia(e, { vence, estado, plan: txt(req.body.plan, 40) || undefined });
+  // La licencia vinculada del cliente queda igual que el sistema.
+  if (e.licencia) {
+    const cambios = {};
+    if (vence) cambios.fechaVencimiento = new Date(`${vence}T23:59:59.999Z`);
+    if (estado) cambios.estado = estado === 'activa' ? 'activa' : 'suspendida';
+    if (Object.keys(cambios).length) await Licencia.updateOne({ _id: e.licencia }, cambios);
+  }
+  res.status(201).json(tarea);
+}));
+
+router.post('/empresas/:id/actualizar', idValido, a(async (req, res) => {
+  const e = await Empresa.findById(req.params.id);
+  if (!e || e.estado !== 'lista') return res.status(409).json({ error: 'El sistema de esta empresa todavía no está creado' });
+  res.status(201).json(await Tarea.create({ tipo: 'actualizar', datos: { slug: e.slug }, empresa: e._id }));
+}));
+
+// Volver a intentar la creación (si el servidor dio error)
+router.post('/empresas/:id/reintentar', idValido, a(async (req, res) => {
+  const e = await Empresa.findById(req.params.id);
+  if (!e || e.estado !== 'error') return res.status(409).json({ error: 'Solo se puede reintentar una empresa con error' });
+  e.set({ estado: 'pendiente', error: undefined });
+  await e.save();
+  await Tarea.create({
+    tipo: 'crear', empresa: e._id,
+    datos: { nombre: e.nombre, slug: e.slug, vence: e.vence, plan: e.plan, admin_usuario: e.adminUsuario, admin_nombre: e.adminNombre, admin_email: e.adminEmail || '' }
+  });
+  res.json(empresaPublica(e));
+}));
+
+router.get('/empresas/:id/clave', idValido, a(async (req, res) => {
+  const e = await Empresa.findById(req.params.id).select('+adminClave');
+  if (!e || !e.adminClave) return res.status(404).json({ error: 'No hay contraseña guardada para esta empresa' });
+  const clave = cifrado.descifrar(e.adminClave);
+  if (!clave) return res.status(500).json({ error: 'No se pudo descifrar (revisa CIFRADO_SECRETO)' });
+  res.json({ usuario: e.adminUsuario, clave, url: e.url });
+}));
+
+// Borra la contraseña guardada (cuando el cliente ya la cambió)
+router.delete('/empresas/:id/clave', idValido, a(async (req, res) => {
+  await Empresa.updateOne({ _id: req.params.id }, { $unset: { adminClave: 1 } });
+  res.json({ ok: true });
+}));
+
+// Quitar del Panel una empresa que no llegó a crearse (no toca el servidor)
+router.delete('/empresas/:id', idValido, a(async (req, res) => {
+  const e = await Empresa.findById(req.params.id);
+  if (!e) return res.status(404).json({ error: 'Empresa no encontrada' });
+  if (e.estado === 'lista') return res.status(409).json({ error: 'Esta empresa ya existe en el servidor. Suspéndela; borrarla del servidor es manual (ver LEEME).' });
+  if (await Tarea.exists({ empresa: e._id, tipo: 'crear', estado: 'enviada' })) {
+    return res.status(409).json({ error: 'El servidor está creando esta empresa ahora. Espera a que termine.' });
+  }
+  await Tarea.deleteMany({ empresa: e._id, estado: 'pendiente' });
+  await e.deleteOne();
   res.json({ ok: true });
 }));
 

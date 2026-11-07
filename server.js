@@ -43,6 +43,8 @@ app.get('/api/health', (req, res) => {
 // Imágenes subidas (para la vista previa en el panel)
 app.get('/imagenes/:id', (req, res, next) => sitio.servirImagen(req, res).catch(next));
 
+// Agente del servidor de empresas (token propio, antes del login del administrador)
+app.use('/api/servidor', require('./routes/servidor'));
 app.use('/api', require('./routes/admin'));
 app.use('/api', (req, res) => res.status(404).json({ error: 'Ruta no encontrada' }));
 
