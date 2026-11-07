@@ -24,8 +24,18 @@ function resumenLicencia(l) {
     vence: fechaValida(l.vence),
     plan: String(l.plan || '').slice(0, 40),
     dias: Number.isFinite(Number(l.dias)) ? Number(l.dias) : undefined,
-    vigente: !!l.vigente
+    vigente: !!l.vigente,
+    almacenamientoGb: Number.isFinite(Number(l.almacenamiento_gb)) ? Number(l.almacenamiento_gb) : undefined
   };
+}
+
+// Datos de la licencia que se copian a la empresa (espacio y acceso del superadministrador).
+function extrasLicencia(l) {
+  if (!l || typeof l !== 'object') return {};
+  const extra = {};
+  if (Number.isFinite(Number(l.almacenamiento_gb))) extra.almacenamientoGb = Number(l.almacenamiento_gb);
+  if ('acceso_super' in l) extra.accesoSuper = !!l.acceso_super;
+  return extra;
 }
 
 // ---- Autenticación del agente ----
@@ -88,6 +98,7 @@ router.post('/tareas/:id/resultado', a(async (req, res) => {
         baseDatos: String(r.base_datos || '').slice(0, 80),
         adminUsuario: r.admin && r.admin.usuario ? String(r.admin.usuario) : empresa.adminUsuario,
         licenciaServidor: resumenLicencia(r.licencia),
+        ...extrasLicencia(r.licencia),
         vence: fechaValida(r.licencia && r.licencia.vence) || empresa.vence,
         sincronizada: new Date()
       });
@@ -95,7 +106,7 @@ router.post('/tareas/:id/resultado', a(async (req, res) => {
       await empresa.save();
     }
   } else if (ok && tarea.tipo === 'licencia' && empresa) {
-    empresa.set({ licenciaServidor: resumenLicencia(r.licencia), sincronizada: new Date() });
+    empresa.set({ licenciaServidor: resumenLicencia(r.licencia), ...extrasLicencia(r.licencia), sincronizada: new Date() });
     if (r.licencia && fechaValida(r.licencia.vence)) empresa.vence = r.licencia.vence;
     await empresa.save();
   } else if (!ok && tarea.tipo === 'crear' && empresa) {
@@ -127,8 +138,10 @@ router.post('/inventario', a(async (req, res) => {
       url: String(e.url || '').slice(0, 400),
       baseDatos: String(e.base_datos || '').slice(0, 80),
       licenciaServidor: resumenLicencia(e.licencia),
+      ...extrasLicencia(e.licencia),
       sincronizada: new Date()
     };
+    if (Number.isFinite(Number(e.uso_bytes))) cambios.usoBytes = Number(e.uso_bytes);
     if (e.licencia && fechaValida(e.licencia.vence)) cambios.vence = e.licencia.vence;
     const existente = await Empresa.findOne({ slug });
     if (existente) {

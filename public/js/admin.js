@@ -304,6 +304,25 @@ function textoLicenciaEmpresa(e) {
   return `Vence ${fechaDia(l.vence)}${Number.isFinite(dias) ? ` · ${dias < 0 ? 'vencida' : `${dias} día${dias === 1 ? '' : 's'}`}` : ''}`;
 }
 
+const OPCIONES_GB = [[1, '1 GB'], [5, '5 GB'], [10, '10 GB'], [20, '20 GB'], [50, '50 GB'], [100, '100 GB'], [250, '250 GB'], [500, '500 GB'], [1000, '1 TB'], [0, 'Ilimitado']];
+const textoGb = (gb) => (!gb ? 'Ilimitado' : gb >= 1000 && gb % 1000 === 0 ? `${gb / 1000} TB` : `${gb} GB`);
+function textoBytes(b) {
+  if (b == null) return '—';
+  const u = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let i = 0;
+  let n = Number(b);
+  while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+  return `${n >= 10 || i === 0 ? Math.round(n) : n.toFixed(1)} ${u[i]}`;
+}
+function barraAlmacenamiento(e) {
+  const gb = Number(e.almacenamientoGb || 0);
+  const uso = e.usoBytes;
+  if (!gb) return `${textoBytes(uso)} usados · Ilimitado`;
+  const pct = uso == null ? 0 : Math.min(100, Math.round((uso / (gb * 1024 ** 3)) * 100));
+  return `${textoBytes(uso)} de ${textoGb(gb)} (${pct}%)
+    <span class="barra-uso"><span style="width:${pct}%" class="${pct >= 95 ? 'llena' : pct >= 80 ? 'alta' : ''}"></span></span>`;
+}
+
 function tarjetaEmpresa(e) {
   const lista = e.estado === 'lista';
   const activa = e.licenciaServidor?.estado !== 'suspendida';
@@ -320,11 +339,14 @@ function tarjetaEmpresa(e) {
         ${e.url ? `<li><b>Dirección</b><a href="${esc(e.url)}" target="_blank" rel="noopener">${esc(e.url)}</a></li>` : ''}
         <li><b>Administrador</b>${esc(e.adminUsuario || 'admin')}</li>
         <li><b>Licencia</b>${esc(textoLicenciaEmpresa(e))}</li>
+        <li><b>Almacenamiento</b>${barraAlmacenamiento(e)}</li>
         ${e.baseDatos ? `<li><b>Base de datos</b>${esc(e.baseDatos)}</li>` : ''}
         ${e.claveVista ? `<li><b>Contraseña</b>El cliente la vio el ${fecha(e.claveVista)}</li>` : ''}
       </ul>
       <div class="acciones">
-        ${lista && e.url ? `<a class="btn btn--chico" href="${esc(e.url)}" target="_blank" rel="noopener">Abrir ↗</a>` : ''}
+        ${lista && e.url ? `<button class="btn btn--chico" data-accion="super-empresa" data-id="${esc(e._id)}" title="Abre su sistema con todas las configuraciones (archivos, almacenamiento, IA, backups, apariencia)">Entrar como superadministrador ↗</button>
+          <a class="btn btn--borde btn--chico" href="${esc(e.url)}" target="_blank" rel="noopener">Abrir ↗</a>` : ''}
+        ${lista ? `<button class="btn btn--borde btn--chico" data-accion="almacenamiento-empresa" data-id="${esc(e._id)}">Almacenamiento</button>` : ''}
         ${lista && e.tieneClave ? `<button class="btn btn--borde btn--chico" data-accion="ver-clave-empresa" data-id="${esc(e._id)}">Ver contraseña</button>` : ''}
         ${lista ? `<button class="btn btn--borde btn--chico" data-accion="renovar-empresa" data-id="${esc(e._id)}">Renovar</button>
           <button class="btn btn--borde btn--chico" data-accion="estado-empresa" data-id="${esc(e._id)}" data-estado="${activa ? 'suspendida' : 'activa'}">${activa ? 'Suspender' : 'Reactivar'}</button>
@@ -356,6 +378,7 @@ async function vistaServidor() {
         : `<button class="btn btn--borde btn--chico" data-accion="vincular-empresa" data-id="${esc(e._id)}">Vincular cliente</button>`}</td>
       <td data-col="Estado">${insignia({ pendiente: 'pendiente', lista: 'activo', error: 'inactivo' }[e.estado])} <small>${esc(ESTADO_EMPRESA[e.estado])}</small></td>
       <td data-col="Licencia">${esc(textoLicenciaEmpresa(e))}</td>
+      <td data-col="Almacenamiento">${e.estado === 'lista' ? `${esc(textoBytes(e.usoBytes))}<small>de ${esc(textoGb(e.almacenamientoGb))}</small>` : '—'}</td>
       <td data-col="Dirección">${e.url ? `<a href="${esc(e.url)}" target="_blank" rel="noopener">Abrir ↗</a>` : '—'}</td>
     </tr>`).join('');
   const TAREA = { crear: 'Crear empresa', licencia: 'Licencia', actualizar: 'Actualizar' };
@@ -377,7 +400,7 @@ async function vistaServidor() {
     </div>
     ${avisos.length ? `<div class="aviso-caja">${avisos.map((x) => `<p>${x}</p>`).join('')}</div>` : ''}
     <h2 class="subtitulo">Empresas</h2>
-    ${tabla(['Empresa', 'Cliente', 'Estado', 'Licencia', 'Dirección'], filas || filaVacia(5, 'Aún no hay sistemas de empresa.'))}
+    ${tabla(['Empresa', 'Cliente', 'Estado', 'Licencia', 'Almacenamiento', 'Dirección'], filas || filaVacia(6, 'Aún no hay sistemas de empresa.'))}
     <h2 class="subtitulo">Últimas tareas del servidor</h2>
     ${tabla(['Fecha', 'Tarea', 'Estado', 'Detalle'], filasTareas || filaVacia(4, 'Sin tareas todavía.'))}`;
 }
@@ -409,6 +432,8 @@ async function formEmpresa({ licenciaId } = {}) {
         <div class="campo"><label>Vence</label><input name="vence" type="date" required value="${vence}"></div>
         <div class="campo"><label>Plan</label><select name="plan">${opciones([['mensual', 'Mensual'], ['anual', 'Anual'], ['pago unico', 'Pago único']], plan)}</select></div>
       </div>
+      <div class="campo"><label>Almacenamiento para sus archivos</label><select name="almacenamientoGb">${opciones(OPCIONES_GB, 10)}</select>
+        <small class="ayuda">Al llegar al límite no podrán subir más archivos. Se puede cambiar después.</small></div>
       <div class="form__fila form__fila--3">
         <div class="campo"><label>Usuario admin</label><input name="adminUsuario" value="admin" maxlength="40"></div>
         <div class="campo"><label>Nombre del admin</label><input name="adminNombre" maxlength="120" value="${esc(u?.nombre || '')}"></div>
@@ -448,6 +473,32 @@ function formRenovar(e) {
     await api(`/empresas/${e._id}/licencia`, { method: 'POST', body: { vence: datos.vence, estado: datos.activar ? 'activa' : undefined } });
     cerrarModal();
     aviso('Renovación enviada: se aplica en el servidor en el próximo minuto.');
+    recargar();
+  });
+}
+
+function formAlmacenamiento(e) {
+  const actual = Number(e.almacenamientoGb || 0);
+  const lista = OPCIONES_GB.some(([v]) => v === actual) ? OPCIONES_GB : [[actual, textoGb(actual)], ...OPCIONES_GB];
+  abrirModal(`
+    <span class="etiqueta">${esc(e.nombre)}</span>
+    <h2 class="titulo">Espacio de <strong>almacenamiento</strong></h2>
+    <p class="texto-gris" style="margin-bottom:16px">Usado ahora: ${esc(textoBytes(e.usoBytes))} (se actualiza cada 10 minutos).</p>
+    <form class="form">
+      <div class="form__fila">
+        <div class="campo"><label>Elegir</label><select name="almacenamientoGb" data-cambio="gb-predefinido">${opciones(lista, actual)}</select></div>
+        <div class="campo"><label>O escribir los GB</label><input name="gbManual" type="number" min="0" step="0.5" placeholder="Ej. 15"></div>
+      </div>
+      <p class="texto-gris">0 = ilimitado. Si la empresa ya usa más que el nuevo límite, sus archivos no se borran: solo no podrá subir más.</p>
+      <button class="btn" type="submit">Guardar</button>
+      <p class="estado" role="status"></p>
+    </form>`,
+  async (datos) => {
+    const gb = datos.gbManual !== '' ? Number(datos.gbManual) : Number(datos.almacenamientoGb);
+    if (!Number.isFinite(gb) || gb < 0) throw new Error('Indica los GB (0 = ilimitado)');
+    await api(`/empresas/${e._id}/licencia`, { method: 'POST', body: { almacenamientoGb: gb } });
+    cerrarModal();
+    aviso(`Almacenamiento: ${textoGb(gb)}. Se aplica en el servidor en el próximo minuto.`);
     recargar();
   });
 }
@@ -1146,6 +1197,18 @@ const acciones = {
     return api(`/empresas/${el.dataset.id}/clave`, { method: 'DELETE' }).then(() => { cerrarModal(); aviso('Contraseña borrada del Panel'); recargar(); });
   },
   'renovar-empresa': (el) => formRenovar(vistaActual.empresas.get(el.dataset.id)),
+  'almacenamiento-empresa': (el) => formAlmacenamiento(vistaActual.empresas.get(el.dataset.id)),
+  'super-empresa': async (el) => {
+    // La pestaña se abre antes de pedir el enlace (si no, el navegador la bloquea como ventana emergente).
+    const ventana = window.open('about:blank', '_blank');
+    try {
+      const r = await api(`/empresas/${el.dataset.id}/acceso-super`, { method: 'POST' });
+      if (ventana) { ventana.opener = null; ventana.location.href = r.url; } else location.href = r.url;
+    } catch (err) {
+      if (ventana) ventana.close();
+      throw err;
+    }
+  },
   'renovar-mas': (el) => { el.closest('form').vence.value = sumarMeses(el.dataset.desde, Number(el.dataset.meses)); },
   'estado-empresa': async (el) => {
     const suspender = el.dataset.estado === 'suspendida';

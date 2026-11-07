@@ -176,6 +176,10 @@ a.tile:hover { border-color: var(--gris); }
 .empresa__datos b { display: block; font-size: .58rem; letter-spacing: .18em; text-transform: uppercase; color: var(--gris); font-weight: 500; }
 .empresa__datos a { border-bottom: 1px solid var(--gris-oscuro); }
 .empresa__error { color: #ff8a8a; font-size: .82rem; }
+.barra-uso { display: block; height: 5px; background: var(--gris-oscuro); margin-top: 6px; overflow: hidden; }
+.barra-uso span { display: block; height: 100%; background: var(--blanco); }
+.barra-uso span.alta { background: #f5a524; }
+.barra-uso span.llena { background: #ff8a8a; }
 .aviso-caja { margin: 18px 0 4px; border: 1px solid var(--gris); border-left: 3px solid var(--blanco); background: var(--grafito); padding: 14px 18px; display: grid; gap: 6px; font-size: .88rem; }
 .insignia--pendiente { border-style: dotted; }
 .insignia--error { border-color: #5a2a2a; color: #ff8a8a; }

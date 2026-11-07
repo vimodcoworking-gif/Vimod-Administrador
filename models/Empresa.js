@@ -20,13 +20,17 @@ const EmpresaSchema = new mongoose.Schema(
     adminClave: { type: String, select: false }, // contraseña inicial, cifrada (lib/cifrado.js)
     claveVista: { type: Date, default: null }, // cuándo la vio el cliente
     vence: { type: String, match: /^\d{4}-\d{2}-\d{2}$/ }, // pedido / último conocido (AAAA-MM-DD)
+    almacenamientoGb: { type: Number, min: 0, default: 0 }, // espacio contratado en GB (0 = ilimitado)
+    usoBytes: { type: Number, default: null }, // espacio usado (inventario del agente)
+    accesoSuper: { type: Boolean, default: false }, // el servidor ya tiene la clave del acceso del superadministrador
     // Estado real informado por el servidor (inventario del agente)
     licenciaServidor: {
       estado: String,
       vence: String,
       plan: String,
       dias: Number,
-      vigente: Boolean
+      vigente: Boolean,
+      almacenamientoGb: Number
     },
     sincronizada: { type: Date, default: null }
   },

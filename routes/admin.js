@@ -262,13 +262,41 @@ function empresaPublica(e) {
   return { ...o, tieneClave };
 }
 
+// GB de almacenamiento recibidos (0 = ilimitado); undefined si no vino o no es válido.
+function gbValidos(v) {
+  if (v === undefined || v === null || v === '') return undefined;
+  const n = Number(v);
+  return Number.isFinite(n) && n >= 0 && n <= 1000000 ? Math.round(n * 100) / 100 : undefined;
+}
+
 async function pedirLicencia(empresa, datos) {
   const d = { slug: empresa.slug };
   if (datos.estado) d.estado = datos.estado === 'activa' ? 'activa' : 'suspendida';
   if (datos.vence) d.vence = datos.vence;
   if (datos.plan) d.plan = datos.plan;
-  if (d.vence) await Empresa.updateOne({ _id: empresa._id }, { vence: d.vence });
+  if (datos.almacenamientoGb !== undefined) d.almacenamiento_gb = datos.almacenamientoGb;
+  const local = {};
+  if (d.vence) local.vence = d.vence;
+  if (d.almacenamiento_gb !== undefined) local.almacenamientoGb = d.almacenamiento_gb;
+  if (Object.keys(local).length) await Empresa.updateOne({ _id: empresa._id }, local);
   return Tarea.create({ tipo: 'licencia', datos: d, empresa: empresa._id });
+}
+
+// Enlace firmado de un solo uso para entrar al sistema de la empresa como
+// superadministrador VIMOD (lo verifica api/vimod_super.php de la empresa).
+// La clave sale de AGENTE_TOKEN, igual que ve_clave_sso() en el servidor.
+function enlaceSuper(empresa) {
+  const token = process.env.AGENTE_TOKEN || '';
+  const clave = crypto.createHmac('sha256', token).update('sso:' + empresa.slug).digest('hex');
+  const datos = Buffer.from(JSON.stringify({
+    e: empresa.slug,
+    u: empresa.adminUsuario || 'admin',
+    exp: Math.floor(Date.now() / 1000) + 90,
+    n: crypto.randomBytes(18).toString('base64url')
+  })).toString('base64url');
+  const firma = crypto.createHmac('sha256', clave).update(datos).digest('hex');
+  const base = empresa.url.endsWith('/') ? empresa.url : empresa.url + '/';
+  return `${base}api/vimod_super.php?t=${datos}.${firma}`;
 }
 
 // (No usar /servidor: ese prefijo es del agente, routes/servidor.js)
@@ -306,6 +334,7 @@ router.post('/empresas', a(async (req, res) => {
   const licencia = mongoose.isValidObjectId(b.licencia) ? await Licencia.findById(b.licencia) : null;
   if (licencia && usuario && String(licencia.usuario) !== String(usuario._id)) return res.status(400).json({ error: 'La licencia es de otro cliente' });
 
+  const almacenamientoGb = gbValidos(b.almacenamientoGb) ?? 0;
   const empresa = await Empresa.create({
     usuario: usuario ? usuario._id : null,
     licencia: licencia ? licencia._id : null,
@@ -313,14 +342,16 @@ router.post('/empresas', a(async (req, res) => {
     plan: txt(b.plan, 40) || 'mensual',
     adminUsuario,
     adminNombre: txt(b.adminNombre, 120) || 'Administrador',
-    adminEmail
+    adminEmail,
+    almacenamientoGb
   });
   await Tarea.create({
     tipo: 'crear',
     empresa: empresa._id,
     datos: {
       nombre, slug, vence, plan: empresa.plan,
-      admin_usuario: adminUsuario, admin_nombre: empresa.adminNombre, admin_email: adminEmail
+      admin_usuario: adminUsuario, admin_nombre: empresa.adminNombre, admin_email: adminEmail,
+      almacenamiento_gb: almacenamientoGb
     }
   });
   res.status(201).json(empresaPublica(empresa));
@@ -352,8 +383,12 @@ router.post('/empresas/:id/licencia', idValido, a(async (req, res) => {
   if (e.estado !== 'lista') return res.status(409).json({ error: 'El sistema de esta empresa todavía no está creado en el servidor' });
   const vence = /^\d{4}-\d{2}-\d{2}$/.test(req.body.vence || '') ? req.body.vence : undefined;
   const estado = ['activa', 'suspendida'].includes(req.body.estado) ? req.body.estado : undefined;
-  if (!vence && !estado) return res.status(400).json({ error: 'Indica la nueva fecha o el estado' });
-  const tarea = await pedirLicencia(e, { vence, estado, plan: txt(req.body.plan, 40) || undefined });
+  const almacenamientoGb = gbValidos(req.body.almacenamientoGb);
+  if (req.body.almacenamientoGb !== undefined && almacenamientoGb === undefined) {
+    return res.status(400).json({ error: 'Almacenamiento inválido: indica los GB (0 = ilimitado)' });
+  }
+  if (!vence && !estado && almacenamientoGb === undefined) return res.status(400).json({ error: 'Indica la nueva fecha, el estado o el almacenamiento' });
+  const tarea = await pedirLicencia(e, { vence, estado, almacenamientoGb, plan: txt(req.body.plan, 40) || undefined });
   // La licencia vinculada del cliente queda igual que el sistema.
   if (e.licencia) {
     const cambios = {};
@@ -362,6 +397,22 @@ router.post('/empresas/:id/licencia', idValido, a(async (req, res) => {
     if (Object.keys(cambios).length) await Licencia.updateOne({ _id: e.licencia }, cambios);
   }
   res.status(201).json(tarea);
+}));
+
+// Entrar al sistema de la empresa como superadministrador VIMOD
+router.post('/empresas/:id/acceso-super', idValido, a(async (req, res) => {
+  const e = await Empresa.findById(req.params.id);
+  if (!e || e.estado !== 'lista' || !/^https?:\/\//i.test(e.url || '')) {
+    return res.status(409).json({ error: 'El sistema de esta empresa todavía no está creado' });
+  }
+  if ((process.env.AGENTE_TOKEN || '').length < 48) return res.status(503).json({ error: 'Falta AGENTE_TOKEN en el Panel' });
+  if (!e.accesoSuper) {
+    // Sistemas creados antes de esta función: el servidor reescribe su licencia con la clave de acceso.
+    const pendiente = await Tarea.exists({ empresa: e._id, tipo: 'licencia', estado: { $in: ['pendiente', 'enviada'] } });
+    if (!pendiente) await Tarea.create({ tipo: 'licencia', datos: { slug: e.slug }, empresa: e._id });
+    return res.status(409).json({ error: 'Estamos habilitando el acceso de superadministrador en el servidor. Vuelve a intentarlo en 1 o 2 minutos.' });
+  }
+  res.json({ url: enlaceSuper(e) });
 }));
 
 router.post('/empresas/:id/actualizar', idValido, a(async (req, res) => {
