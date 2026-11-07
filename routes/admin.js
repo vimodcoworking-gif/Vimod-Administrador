@@ -7,7 +7,9 @@ const Licencia = require('../models/Licencia');
 const Sistema = require('../models/Sistema');
 const Solicitud = require('../models/Solicitud');
 const Contacto = require('../models/Contacto');
-const planes = require('../lib/planes');
+const Contenido = require('../models/Contenido');
+const Imagen = require('../models/Imagen');
+const sitio = require('../lib/sitio');
 const auth = require('../lib/auth');
 
 const router = express.Router();
@@ -20,6 +22,19 @@ const tomar = (obj, campos) => Object.fromEntries(campos.filter((c) => obj[c] !=
 const vacioANull = (v) => (v === '' || v === undefined ? null : v);
 const idValido = (req, res, next) =>
   mongoose.isValidObjectId(req.params.id) ? next() : res.status(404).json({ error: 'No encontrado' });
+
+// Textos y listas recibidos desde los formularios
+const txt = (v, max = 600) => String(v ?? '').trim().slice(0, max);
+const arr = (v) => (Array.isArray(v) ? v : []);
+const lineas = (v, max = 160, cant = 30) => arr(v).map((x) => txt(x, max)).filter(Boolean).slice(0, cant);
+const urlImagen = (v) => {
+  const u = txt(v, 500);
+  return /^(https?:\/\/|\/imagenes\/[a-f0-9]{24}$)/i.test(u) ? u : '';
+};
+const numONull = (v) => (v === '' || v === null || v === undefined ? null : Number(v));
+const slug = (t) =>
+  String(t || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 50) || 'plan';
 
 // Compara en tiempo constante (evita deducir la contraseña por tiempos de respuesta).
 const igual = (x, y) => {
@@ -61,11 +76,20 @@ router.use((req, res, next) =>
 );
 
 router.get('/config', (req, res) => {
-  res.json({
-    sitioUrl: (process.env.SITIO_URL || '').replace(/\/$/, ''),
-    planes: planes.map((p) => ({ id: p.id, nombre: p.nombre, precio: p.precio }))
-  });
+  res.json({ sitioUrl: (process.env.SITIO_URL || '').replace(/\/$/, '') });
 });
+
+// Añade el nombre del software y del plan a solicitudes/licencias con "sistema" poblado.
+const conNombres = (doc) => {
+  const o = doc.toObject ? doc.toObject({ virtuals: true }) : doc;
+  const s = o.sistema && typeof o.sistema === 'object' ? o.sistema : null;
+  return {
+    ...o,
+    sistema: s ? { _id: s._id, nombre: s.nombre, url: s.url } : o.sistema || null,
+    sistemaNombre: s ? s.nombre : '',
+    planNombre: Sistema.nombrePlan(s, o.plan)
+  };
+};
 
 // ---- Resumen ----
 const filtroActivas = () => ({
@@ -84,10 +108,14 @@ router.get('/resumen', a(async (req, res) => {
       Solicitud.countDocuments(pendientes),
       Contacto.countDocuments({ leido: { $ne: true } }),
       Licencia.find({ estado: 'activa', fechaVencimiento: { $gte: ahora, $lte: new Date(Date.now() + 30 * DIA) } })
-        .populate('usuario', 'nombre email').populate('sistema', 'nombre').sort('fechaVencimiento').limit(10),
-      Solicitud.find().sort('-createdAt').limit(6)
+        .populate('usuario', 'nombre email').populate('sistema', 'nombre planes').sort('fechaVencimiento').limit(50),
+      Solicitud.find().populate('sistema', 'nombre planes').sort('-createdAt').limit(6)
     ]);
-  res.json({ usuarios, usuariosActivos, licenciasActivas, solicitudesPendientes, mensajesSinLeer, porVencer, ultimasSolicitudes });
+  res.json({
+    usuarios, usuariosActivos, licenciasActivas, solicitudesPendientes, mensajesSinLeer,
+    porVencer: porVencer.map(conNombres),
+    ultimasSolicitudes: ultimasSolicitudes.map(conNombres)
+  });
 }));
 
 router.get('/contadores', a(async (req, res) => {
@@ -120,9 +148,11 @@ router.get('/usuarios', a(async (req, res) => {
 router.get('/usuarios/:id', idValido, a(async (req, res) => {
   const usuario = await Usuario.findById(req.params.id);
   if (!usuario) return res.status(404).json({ error: 'Usuario no encontrado' });
-  const licencias = await Licencia.find({ usuario: usuario._id }).populate('sistema', 'nombre url').sort('-createdAt');
-  const solicitudes = await Solicitud.find({ email: usuario.email }).sort('-createdAt').limit(20);
-  res.json({ usuario, licencias: licencias.map((l) => l.toObject({ virtuals: true })), solicitudes });
+  const [licencias, solicitudes] = await Promise.all([
+    Licencia.find({ usuario: usuario._id }).populate('sistema', 'nombre url planes').sort('-createdAt'),
+    Solicitud.find({ email: usuario.email }).populate('sistema', 'nombre planes').sort('-createdAt').limit(20)
+  ]);
+  res.json({ usuario, licencias: licencias.map(conNombres), solicitudes: solicitudes.map(conNombres) });
 }));
 
 router.post('/usuarios', a(async (req, res) => {
@@ -164,27 +194,37 @@ function datosLicencia(body) {
   return d;
 }
 
+// El plan debe existir en el software elegido.
+async function validarSistemaYPlan(sistemaId, plan) {
+  if (!mongoose.isValidObjectId(sistemaId)) return 'Elige un software';
+  const s = await Sistema.findById(sistemaId, 'planes').lean();
+  if (!s) return 'Elige un software';
+  if (s.planes.length && !s.planes.some((p) => p.codigo === plan)) return 'Elige un plan de este software';
+  if (!plan) return 'Elige un plan';
+  return null;
+}
+
 router.post('/licencias', a(async (req, res) => {
   const d = datosLicencia(req.body);
   if (!mongoose.isValidObjectId(d.usuario) || !(await Usuario.exists({ _id: d.usuario }))) {
     return res.status(400).json({ error: 'Usuario no válido' });
   }
-  if (!mongoose.isValidObjectId(d.sistema) || !(await Sistema.exists({ _id: d.sistema }))) {
-    return res.status(400).json({ error: 'Elige un sistema' });
-  }
-  const licencia = await Licencia.create(d);
-  res.status(201).json(licencia);
+  const error = await validarSistemaYPlan(d.sistema, d.plan);
+  if (error) return res.status(400).json({ error });
+  res.status(201).json(await Licencia.create(d));
 }));
 
 router.put('/licencias/:id', idValido, a(async (req, res) => {
   const d = datosLicencia(req.body);
   delete d.usuario; // una licencia no cambia de dueño
-  if ('sistema' in d && !(mongoose.isValidObjectId(d.sistema) && (await Sistema.exists({ _id: d.sistema })))) {
-    return res.status(400).json({ error: 'Elige un sistema' });
+  const actual = await Licencia.findById(req.params.id);
+  if (!actual) return res.status(404).json({ error: 'Licencia no encontrada' });
+  if ('sistema' in d || 'plan' in d) {
+    const error = await validarSistemaYPlan(d.sistema ?? actual.sistema, d.plan ?? actual.plan);
+    if (error) return res.status(400).json({ error });
   }
-  const licencia = await Licencia.findByIdAndUpdate(req.params.id, d, { new: true, runValidators: true });
-  if (!licencia) return res.status(404).json({ error: 'Licencia no encontrada' });
-  res.json(licencia);
+  actual.set(d);
+  res.json(await actual.save());
 }));
 
 router.delete('/licencias/:id', idValido, a(async (req, res) => {
@@ -193,41 +233,155 @@ router.delete('/licencias/:id', idValido, a(async (req, res) => {
   res.json({ ok: true });
 }));
 
-// ---- Sistemas ----
-const CAMPOS_SISTEMA = ['nombre', 'descripcion', 'url', 'activo'];
+// ---- Softwares y planes ----
+function limpiarPlanes(planes) {
+  const usados = new Set();
+  return arr(planes).slice(0, 12).map((p) => {
+    const base = slug(p.codigo || p.nombre);
+    let codigo = base;
+    for (let n = 2; usados.has(codigo); n++) codigo = `${base}-${n}`;
+    usados.add(codigo);
+    return {
+      codigo,
+      nombre: txt(p.nombre, 60),
+      precio: numONull(p.precio),
+      periodo: txt(p.periodo, 30) || null,
+      descripcion: txt(p.descripcion, 300),
+      destacado: !!p.destacado,
+      caracteristicas: lineas(p.caracteristicas),
+      maxUsuarios: numONull(p.maxUsuarios)
+    };
+  });
+}
+
+function datosSistema(body) {
+  const d = {};
+  for (const [campo, max] of [['nombre', 120], ['etiqueta', 80], ['titulo', 160], ['descripcion', 1000], ['resumen', 400], ['textoPlanes', 400]]) {
+    if (body[campo] !== undefined) d[campo] = txt(body[campo], max);
+  }
+  if (body.url !== undefined) d.url = /^https?:\/\//i.test(txt(body.url)) ? txt(body.url, 300) : '';
+  if (body.imagen !== undefined) d.imagen = urlImagen(body.imagen);
+  if (body.caracteristicas !== undefined) d.caracteristicas = lineas(body.caracteristicas);
+  if (body.planes !== undefined) d.planes = limpiarPlanes(body.planes);
+  if (body.activo !== undefined) d.activo = !!body.activo;
+  if (body.publicado !== undefined) d.publicado = !!body.publicado;
+  if (body.orden !== undefined) d.orden = Number(body.orden) || 0;
+  return d;
+}
 
 router.get('/sistemas', a(async (req, res) => {
-  const sistemas = await Sistema.find().sort('nombre').lean();
+  const sistemas = await Sistema.find().sort({ orden: 1, createdAt: 1 }).lean();
   const conteos = await Licencia.aggregate([{ $group: { _id: '$sistema', total: { $sum: 1 } } }]);
   const mapa = new Map(conteos.map((c) => [String(c._id), c.total]));
   res.json(sistemas.map((s) => ({ ...s, licencias: mapa.get(String(s._id)) || 0 })));
 }));
 
+router.get('/sistemas/:id', idValido, a(async (req, res) => {
+  const s = await Sistema.findById(req.params.id).lean();
+  if (!s) return res.status(404).json({ error: 'Software no encontrado' });
+  const usados = await Licencia.aggregate([
+    { $match: { sistema: s._id } },
+    { $group: { _id: '$plan', total: { $sum: 1 } } }
+  ]);
+  res.json({ ...s, licenciasPorPlan: Object.fromEntries(usados.map((u) => [u._id, u.total])) });
+}));
+
 router.post('/sistemas', a(async (req, res) => {
-  res.status(201).json(await Sistema.create(tomar(req.body, CAMPOS_SISTEMA)));
+  res.status(201).json(await Sistema.create(datosSistema(req.body)));
 }));
 
 router.put('/sistemas/:id', idValido, a(async (req, res) => {
-  const s = await Sistema.findByIdAndUpdate(req.params.id, tomar(req.body, CAMPOS_SISTEMA), { new: true, runValidators: true });
-  if (!s) return res.status(404).json({ error: 'Sistema no encontrado' });
-  res.json(s);
+  const s = await Sistema.findById(req.params.id);
+  if (!s) return res.status(404).json({ error: 'Software no encontrado' });
+  const d = datosSistema(req.body);
+  if (d.planes) {
+    // No permitir quitar un plan que tiene licencias asignadas.
+    const nuevos = new Set(d.planes.map((p) => p.codigo));
+    for (const p of s.planes.filter((x) => !nuevos.has(x.codigo))) {
+      const n = await Licencia.countDocuments({ sistema: s._id, plan: p.codigo });
+      if (n) return res.status(409).json({ error: `No puedes eliminar el plan "${p.nombre}": tiene ${n} licencia(s). Puedes cambiarle el nombre o el precio.` });
+    }
+  }
+  s.set(d);
+  res.json(await s.save());
 }));
 
 router.delete('/sistemas/:id', idValido, a(async (req, res) => {
   const enUso = await Licencia.countDocuments({ sistema: req.params.id });
-  if (enUso) return res.status(409).json({ error: `No se puede eliminar: tiene ${enUso} licencia(s). Desactívalo en su lugar.` });
+  if (enUso) return res.status(409).json({ error: `No se puede eliminar: tiene ${enUso} licencia(s). Despublícalo en su lugar.` });
   const r = await Sistema.findByIdAndDelete(req.params.id);
-  if (!r) return res.status(404).json({ error: 'Sistema no encontrado' });
+  if (!r) return res.status(404).json({ error: 'Software no encontrado' });
   res.json({ ok: true });
+}));
+
+// ---- Contenido de la página ----
+function limpiarContenido(d) {
+  const r = {};
+  if (d.nosotros) {
+    const n = d.nosotros;
+    r.nosotros = {
+      etiqueta: txt(n.etiqueta, 80),
+      titulo: txt(n.titulo, 200),
+      parrafos: lineas(n.parrafos, 1500, 6),
+      imagen: urlImagen(n.imagen),
+      cifras: arr(n.cifras).slice(0, 6)
+        .map((c) => ({ valor: Math.max(0, Math.round(Number(c.valor) || 0)), texto: txt(c.texto, 40) }))
+        .filter((c) => c.texto)
+    };
+  }
+  if (d.proyectos) {
+    const p = d.proyectos;
+    r.proyectos = {
+      etiqueta: txt(p.etiqueta, 80),
+      titulo: txt(p.titulo, 200),
+      texto: txt(p.texto, 400),
+      items: arr(p.items).slice(0, 40)
+        .map((i) => ({ titulo: txt(i.titulo, 120), categoria: txt(i.categoria, 60), imagen: urlImagen(i.imagen) }))
+        .filter((i) => i.titulo || i.imagen)
+    };
+  }
+  if (d.softwares) r.softwares = { etiqueta: txt(d.softwares.etiqueta, 80) };
+  if (d.contacto) {
+    const c = d.contacto;
+    r.contacto = {
+      etiqueta: txt(c.etiqueta, 80),
+      titulo: txt(c.titulo, 200),
+      texto: txt(c.texto, 400),
+      correo: txt(c.correo, 120),
+      telefono: txt(c.telefono, 60),
+      direccion: txt(c.direccion, 200),
+      horario: txt(c.horario, 120)
+    };
+  }
+  return r;
+}
+
+router.get('/contenido', a(async (req, res) => res.json(await sitio.obtenerContenido())));
+
+router.put('/contenido', a(async (req, res) => {
+  const limpio = limpiarContenido(req.body || {});
+  const set = Object.fromEntries(Object.entries(limpio).map(([k, v]) => [`datos.${k}`, v]));
+  if (Object.keys(set).length) await Contenido.updateOne({ _id: 'sitio' }, { $set: set }, { upsert: true });
+  res.json(await sitio.obtenerContenido());
+}));
+
+// ---- Imágenes ----
+router.post('/imagenes', a(async (req, res) => {
+  const m = /^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=]+)$/.exec(String(req.body.datos || ''));
+  if (!m) return res.status(400).json({ error: 'Formato de imagen no válido (usa JPG, PNG o WEBP)' });
+  const datos = Buffer.from(m[2], 'base64');
+  if (datos.length > 4 * 1024 * 1024) return res.status(413).json({ error: 'La imagen es demasiado grande (máx. 4 MB)' });
+  const img = await Imagen.create({ datos, tipo: m[1], nombre: txt(req.body.nombre, 200) });
+  res.status(201).json({ url: `/imagenes/${img.id}` });
 }));
 
 // ---- Solicitudes de planes ----
 router.get('/solicitudes', a(async (req, res) => {
   const filtro = req.query.estado === 'pendiente' ? pendientes : req.query.estado ? { estado: req.query.estado } : {};
-  const lista = await Solicitud.find(filtro).sort('-createdAt').limit(500).lean();
+  const lista = await Solicitud.find(filtro).populate('sistema', 'nombre planes').sort('-createdAt').limit(500);
   const correos = await Usuario.find({ email: { $in: lista.map((s) => s.email) } }, 'email').lean();
   const conCuenta = new Map(correos.map((u) => [u.email, String(u._id)]));
-  res.json(lista.map((s) => ({ ...s, estado: s.estado || 'pendiente', usuarioId: conCuenta.get(s.email) || null })));
+  res.json(lista.map((s) => ({ ...conNombres(s), estado: s.estado || 'pendiente', usuarioId: conCuenta.get(s.email) || null })));
 }));
 
 router.put('/solicitudes/:id', idValido, a(async (req, res) => {
@@ -261,6 +415,7 @@ router.delete('/mensajes/:id', idValido, a(async (req, res) => {
 
 // ---- Errores ----
 router.use((err, req, res, next) => {
+  if (err.type === 'entity.too.large') return res.status(413).json({ error: 'El contenido es demasiado grande' });
   if (err.code === 11000) {
     const campo = Object.keys(err.keyPattern || {})[0];
     return res.status(409).json({ error: campo === 'email' ? 'Ya existe un usuario con ese correo' : 'Registro duplicado' });

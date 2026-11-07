@@ -2,7 +2,7 @@ require('dotenv').config();
 const path = require('path');
 const express = require('express');
 const mongoose = require('mongoose');
-const Sistema = require('./models/Sistema');
+const sitio = require('./lib/sitio');
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -10,7 +10,8 @@ const MONGODB_URI = process.env.MONGODB_URI;
 
 app.set('trust proxy', 1); // Render está detrás de un proxy HTTPS
 app.disable('x-powered-by');
-app.use(express.json({ limit: '50kb' }));
+app.use('/api/imagenes', express.json({ limit: '6mb' })); // subida de imágenes (base64)
+app.use(express.json({ limit: '200kb' }));
 app.use((req, res, next) => {
   res.setHeader('X-Frame-Options', 'DENY');
   res.setHeader('X-Robots-Tag', 'noindex');
@@ -24,14 +25,7 @@ if (MONGODB_URI) {
     .connect(MONGODB_URI)
     .then(async () => {
       console.log('✔ Conectado a MongoDB');
-      // Catálogo inicial de sistemas
-      if ((await Sistema.countDocuments()) === 0) {
-        await Sistema.create({
-          nombre: 'VIMOD Gestión',
-          descripcion: 'Software de gestión empresarial: facturación, inventario, CRM, contabilidad y proyectos.'
-        });
-        console.log('✔ Sistema "VIMOD Gestión" creado');
-      }
+      await sitio.sembrar().catch((err) => console.error('✖ Error preparando el contenido:', err.message));
     })
     .catch((err) => console.error('✖ Error conectando a MongoDB:', err.message));
 } else {
@@ -44,6 +38,9 @@ if (!process.env.ADMIN_USUARIO || !process.env.ADMIN_PASSWORD) {
 app.get('/api/health', (req, res) => {
   res.json({ ok: true, db: mongoose.connection.readyState === 1 ? 'conectada' : 'desconectada' });
 });
+
+// Imágenes subidas (para la vista previa en el panel)
+app.get('/imagenes/:id', (req, res, next) => sitio.servirImagen(req, res).catch(next));
 
 app.use('/api', require('./routes/admin'));
 app.use('/api', (req, res) => res.status(404).json({ error: 'Ruta no encontrada' }));

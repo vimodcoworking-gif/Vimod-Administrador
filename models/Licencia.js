@@ -13,7 +13,7 @@ const LicenciaSchema = new mongoose.Schema(
   {
     usuario: { type: mongoose.Schema.Types.ObjectId, ref: 'Usuario', required: true, index: true },
     sistema: { type: mongoose.Schema.Types.ObjectId, ref: 'Sistema', required: true },
-    plan: { type: String, required: true, enum: ['estandar', 'premium', 'enterprise'] },
+    plan: { type: String, required: true, trim: true, maxlength: 60 }, // código del plan dentro del software
     clave: { type: String, unique: true, default: generarClave },
     estado: { type: String, enum: ['activa', 'suspendida', 'vencida'], default: 'activa' },
     fechaInicio: { type: Date, default: Date.now },
