@@ -244,6 +244,7 @@ async function vistaUsuario(id) {
       <div><b>Empresa</b><span>${esc(u.empresa) || '—'}</span></div>
       <div><b>Teléfono</b><span>${esc(u.telefono) || '—'}</span></div>
       <div><b>Estado</b><span>${insignia(u.activo ? 'activo' : 'inactivo')}</span></div>
+      <div><b>Acceso</b><span>${u.googleId ? 'Google' : 'Correo y contraseña'}</span></div>
       <div><b>Cliente desde</b><span>${fecha(u.createdAt)}</span></div>
       <div><b>Último acceso</b><span>${fecha(u.ultimoAcceso)}</span></div>
     </div>
