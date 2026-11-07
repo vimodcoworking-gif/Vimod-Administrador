@@ -232,6 +232,7 @@ async function vistaUsuario(id) {
     <tr>
       <td data-col="Software">${esc(l.sistemaNombre || '—')}</td>
       <td data-col="Plan">${esc(l.planNombre)}</td>
+      <td data-col="Precio">${l.precio != null ? esc(precioTexto(l)) : '—'}</td>
       <td data-col="Clave"><span class="clave">${esc(l.clave)}</span></td>
       <td data-col="Inicio">${fechaDia(l.fechaInicio)}</td>
       <td data-col="Vence">${l.fechaVencimiento ? fechaDia(l.fechaVencimiento) : 'Sin vencimiento'}</td>
@@ -273,7 +274,7 @@ async function vistaUsuario(id) {
       <h2 class="subtitulo" style="margin:0">Licencias y softwares</h2>
       <button class="btn btn--chico" data-accion="nueva-licencia">+ Asignar licencia</button>
     </div>
-    ${tabla(['Software', 'Plan', 'Clave', 'Inicio', 'Vence', 'Usuarios', 'Estado', ''], filasLic || filaVacia(8, 'Este usuario aún no tiene licencias.'))}
+    ${tabla(['Software', 'Plan', 'Precio', 'Clave', 'Inicio', 'Vence', 'Usuarios', 'Estado', ''], filasLic || filaVacia(9,'Este usuario aún no tiene licencias.'))}
     <h2 class="subtitulo">Solicitudes con este correo</h2>
     ${tabla(['Fecha', 'Software', 'Plan', 'Estado'], filasSol || filaVacia(4, 'Sin solicitudes.'))}
     ${acceso}`;
@@ -787,6 +788,41 @@ const opcionesPlan = (sistema, actual) => {
 const sistemaPorId = (id) => sistemas.find((s) => String(s._id) === String(id));
 const planDe = (sistema, codigo) => (sistema?.planes || []).find((p) => p.codigo === codigo);
 
+// ---- Duración, facturación y precio de la licencia ----
+const PERIODOS_LICENCIA = [['mes', 'Mensual'], ['año', 'Anual'], ['pago único', 'Pago único'], ['', 'Sin especificar']];
+const DURACIONES = [['1', '1 mes'], ['3', '3 meses'], ['6', '6 meses'], ['12', '1 año'], ['24', '2 años'], ['36', '3 años'], ['0', 'Sin vencimiento'], ['', 'Personalizada']];
+const periodoDelPlan = (plan) => (/^a[ñn]o|anual/i.test(plan?.periodo || '') ? 'año' : plan?.precio == null && plan ? '' : 'mes');
+const textoPrecioPlan = (plan) => (plan ? `Precio del plan: ${precioTexto(plan)}` : '');
+const redondear = (n) => Math.round(n * 100) / 100;
+
+// Precio para la facturación elegida a partir del precio del plan (anual = mensual × 12, y al revés).
+function precioSugerido(plan, periodo) {
+  if (!plan || plan.precio == null) return '';
+  const planAnual = periodoDelPlan(plan) === 'año';
+  if (periodo === 'año') return planAnual ? plan.precio : redondear(plan.precio * 12);
+  if (periodo === 'mes') return planAnual ? redondear(plan.precio / 12) : plan.precio;
+  return plan.precio;
+}
+
+// Qué opción de duración corresponde a unas fechas ('' = personalizada).
+function duracionDe(inicio, vence) {
+  if (!vence) return '0';
+  const op = DURACIONES.find(([m]) => Number(m) > 0 && sumarMeses(inicio || hoy(), Number(m)) === vence);
+  return op ? op[0] : '';
+}
+
+function recalcularLicencia(form, { precio = false } = {}) {
+  const plan = planDe(sistemaPorId(form.sistema.value), form.plan.value);
+  $('#precioPlan', form).textContent = textoPrecioPlan(plan);
+  if (precio && !form.precio.dataset.editado) form.precio.value = precioSugerido(plan, form.periodo.value);
+}
+
+function aplicarDuracion(form) {
+  const meses = form.duracion.value;
+  if (meses === '') return; // personalizada: se respeta la fecha escrita
+  form.fechaVencimiento.value = meses === '0' ? '' : sumarMeses(form.fechaInicio.value || hoy(), Number(meses));
+}
+
 function formLicencia(l, prefill = {}) {
   const u = vistaActual.usuario;
   const actualId = l?.sistema?._id || prefill.sistema;
@@ -799,7 +835,13 @@ function formLicencia(l, prefill = {}) {
   }
   const sistema = sistemaPorId(actualId) || disponibles[0];
   const planCodigo = l?.plan || prefill.plan || sistema.planes?.[0]?.codigo || '';
-  const maxUsuarios = l ? l.maxUsuarios ?? '' : planDe(sistema, planCodigo)?.maxUsuarios ?? '';
+  const plan = planDe(sistema, planCodigo);
+  const maxUsuarios = l ? l.maxUsuarios ?? '' : plan?.maxUsuarios ?? '';
+  const inicio = l ? aInput(l.fechaInicio) : hoy();
+  const periodo = l ? l.periodo || '' : periodoDelPlan(plan);
+  const vence = l ? aInput(l.fechaVencimiento) : sumarMeses(inicio, periodo === 'año' ? 12 : 1);
+  const duracion = duracionDe(inicio, vence);
+  const precio = l ? l.precio ?? '' : precioSugerido(plan, periodo);
 
   abrirModal(`
     <span class="etiqueta">${esc(u.nombre)}</span>
@@ -810,24 +852,28 @@ function formLicencia(l, prefill = {}) {
         <div class="campo"><label>Plan</label><select name="plan" data-cambio="plan-licencia">${opcionesPlan(sistema, planCodigo)}</select></div>
       </div>
       <div class="form__fila">
-        <div class="campo"><label>Inicio</label><input name="fechaInicio" type="date" value="${l ? aInput(l.fechaInicio) : hoy()}"></div>
-        <div class="campo"><label>Vencimiento (vacío = sin vencimiento)</label><input name="fechaVencimiento" type="date" value="${l ? aInput(l.fechaVencimiento) : sumarMeses(hoy(), 1)}"></div>
-      </div>
-      <div class="acciones">
-        <button class="btn btn--borde btn--chico" type="button" data-accion="vence-mas" data-meses="1">+1 mes</button>
-        <button class="btn btn--borde btn--chico" type="button" data-accion="vence-mas" data-meses="6">+6 meses</button>
-        <button class="btn btn--borde btn--chico" type="button" data-accion="vence-mas" data-meses="12">+1 año</button>
+        <div class="campo"><label>Facturación</label><select name="periodo" data-cambio="periodo-licencia">${opciones(PERIODOS_LICENCIA, periodo)}</select></div>
+        <div class="campo"><label>Precio $ (vacío = sin precio)</label><input name="precio" type="number" min="0" step="0.01" value="${esc(precio)}" data-precio data-editado="${l && precio !== '' ? '1' : ''}">
+          <small class="ayuda" id="precioPlan">${esc(textoPrecioPlan(plan))}</small></div>
       </div>
       <div class="form__fila">
+        <div class="campo"><label>Duración</label><select name="duracion" data-cambio="duracion-licencia">${opciones(DURACIONES, duracion)}</select></div>
+        <div class="campo"><label>Inicio</label><input name="fechaInicio" type="date" value="${inicio}" data-cambio="inicio-licencia"></div>
+      </div>
+      <div class="form__fila">
+        <div class="campo"><label>Vencimiento (editable)</label><input name="fechaVencimiento" type="date" value="${vence}" data-vence></div>
         <div class="campo"><label>Máx. usuarios (vacío = ilimitados)</label><input name="maxUsuarios" type="number" min="1" value="${esc(maxUsuarios)}"></div>
+      </div>
+      <div class="form__fila">
         <div class="campo"><label>Estado</label><select name="estado">${opciones([['activa', 'Activa'], ['suspendida', 'Suspendida'], ['vencida', 'Vencida']], l?.estado || 'activa')}</select></div>
+        <div></div>
       </div>
       <div class="campo"><label>Notas internas (el cliente no las ve)</label><textarea name="notas" maxlength="1000">${esc(l?.notas)}</textarea></div>
       ${l ? `<p class="texto-gris">Clave: <span class="clave">${esc(l.clave)}</span></p>` : '<p class="texto-gris">La clave de licencia se genera automáticamente.</p>'}
       <button class="btn" type="submit">${l ? 'Guardar cambios' : 'Asignar licencia'}</button>
       <p class="estado" role="status"></p>
     </form>`,
-  async (datos) => {
+  async ({ duracion, ...datos }) => {
     if (l) await api('/licencias/' + l._id, { method: 'PUT', body: datos });
     else await api('/licencias', { method: 'POST', body: { ...datos, usuario: u._id } });
     cerrarModal();
@@ -956,10 +1002,22 @@ document.addEventListener('change', async (e) => {
     const s = sistemaPorId(el.value);
     el.form.plan.innerHTML = opcionesPlan(s, s?.planes?.[0]?.codigo);
     el.form.maxUsuarios.value = s?.planes?.[0]?.maxUsuarios ?? '';
+    recalcularLicencia(el.form, { precio: true });
   }
   if (el.dataset.cambio === 'plan-licencia') {
     el.form.maxUsuarios.value = planDe(sistemaPorId(el.form.sistema.value), el.value)?.maxUsuarios ?? '';
+    recalcularLicencia(el.form, { precio: true });
   }
+  if (el.dataset.cambio === 'periodo-licencia') {
+    // Anual → 1 año, mensual → 1 mes (si la duración era la típica del otro periodo)
+    const d = el.form.duracion;
+    if (el.value === 'año' && d.value === '1') d.value = '12';
+    if (el.value === 'mes' && d.value === '12') d.value = '1';
+    aplicarDuracion(el.form);
+    recalcularLicencia(el.form, { precio: true });
+  }
+  if (el.dataset.cambio === 'duracion-licencia' || el.dataset.cambio === 'inicio-licencia') aplicarDuracion(el.form);
+  if (el.matches('[data-vence]')) el.form.duracion.value = duracionDe(el.form.fechaInicio.value, el.value);
 });
 
 let tBusqueda;
@@ -967,6 +1025,7 @@ let tVista;
 document.addEventListener('input', (e) => {
   const el = e.target;
   if (el.closest('.editor')) hayCambios = true;
+  if (el.matches('[data-precio]')) el.dataset.editado = el.value === '' ? '' : '1'; // precio a mano: no recalcular
   if (el.matches('[data-imagen]')) {
     clearTimeout(tVista);
     tVista = setTimeout(() => vistaPrevia(el), 400);

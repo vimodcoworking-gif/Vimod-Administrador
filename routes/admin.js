@@ -185,7 +185,9 @@ router.delete('/usuarios/:id', idValido, a(async (req, res) => {
 
 // ---- Licencias ----
 function datosLicencia(body) {
-  const d = tomar(body, ['usuario', 'sistema', 'plan', 'estado', 'fechaInicio', 'fechaVencimiento', 'maxUsuarios', 'notas']);
+  const d = tomar(body, ['usuario', 'sistema', 'plan', 'estado', 'fechaInicio', 'fechaVencimiento', 'maxUsuarios', 'precio', 'periodo', 'notas']);
+  if ('precio' in d) d.precio = numONull(d.precio);
+  if ('periodo' in d) d.periodo = txt(d.periodo, 30) || null;
   // Fechas "AAAA-MM-DD": el inicio cuenta desde el comienzo del día y el vencimiento hasta su final.
   const dia = (v, hora) => (/^\d{4}-\d{2}-\d{2}$/.test(v) ? `${v}T${hora}Z` : v);
   if ('fechaInicio' in d) d.fechaInicio = dia(vacioANull(d.fechaInicio), '00:00:00.000') || new Date();

@@ -19,6 +19,8 @@ const LicenciaSchema = new mongoose.Schema(
     fechaInicio: { type: Date, default: Date.now },
     fechaVencimiento: { type: Date, default: null },
     maxUsuarios: { type: Number, min: 1, default: null },
+    precio: { type: Number, min: 0, default: null }, // precio acordado para esta licencia (puede diferir del plan)
+    periodo: { type: String, trim: true, maxlength: 30, default: null }, // mes, año, pago único…
     notas: { type: String, trim: true, maxlength: 1000 } // solo visible para el administrador
   },
   { timestamps: true }
