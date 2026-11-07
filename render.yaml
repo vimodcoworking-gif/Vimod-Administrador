@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: vimod-administrador
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: MONGODB_URI
+        sync: false
+      - key: ADMIN_USUARIO
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: SITIO_URL
+        sync: false
+      - key: SESSION_SECRET
+        generateValue: true

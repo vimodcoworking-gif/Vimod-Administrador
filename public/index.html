@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Panel administrador | VIMOD</title>
+  <meta name="robots" content="noindex, nofollow">
+  <link rel="icon" href="img/vimod-logo.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@200;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/admin.css">
+</head>
+<body>
+
+  <!-- Login -->
+  <main class="login" id="login" hidden>
+    <form class="login__caja" id="formLogin">
+      <img src="img/vimod-logo.png" alt="VIMOD" class="login__logo">
+      <span class="etiqueta">Panel administrador</span>
+      <h1 class="titulo">Iniciar <strong>sesión</strong></h1>
+      <div class="campo"><label for="l-usuario">Usuario</label><input id="l-usuario" name="usuario" autocomplete="username" required></div>
+      <div class="campo"><label for="l-password">Contraseña</label><input id="l-password" name="password" type="password" autocomplete="current-password" required></div>
+      <button class="btn" type="submit">Ingresar <span class="flecha">→</span></button>
+      <p class="estado" id="estadoLogin" role="status"></p>
+    </form>
+  </main>
+
+  <!-- Aplicación -->
+  <div class="app" id="app" hidden>
+    <aside class="lateral" id="lateral">
+      <div class="lateral__marca">
+        <img src="img/vimod-logo.png" alt="VIMOD">
+        <span class="etiqueta">Administrador</span>
+      </div>
+      <nav class="lateral__menu" id="menu">
+        <a href="#/resumen" data-ruta="resumen">Resumen</a>
+        <a href="#/usuarios" data-ruta="usuarios">Usuarios</a>
+        <a href="#/sistemas" data-ruta="sistemas">Sistemas</a>
+        <a href="#/solicitudes" data-ruta="solicitudes">Solicitudes <span class="contador" id="cSolicitudes"></span></a>
+        <a href="#/mensajes" data-ruta="mensajes">Mensajes <span class="contador" id="cMensajes"></span></a>
+      </nav>
+      <div class="lateral__pie">
+        <span class="lateral__admin" id="adminNombre"></span>
+        <button class="btn btn--borde btn--chico" id="salir" type="button">Cerrar sesión</button>
+      </div>
+    </aside>
+    <button class="menu-movil" id="menuMovil" aria-label="Abrir menú"><span></span><span></span><span></span></button>
+    <main class="principal" id="vista" tabindex="-1"></main>
+  </div>
+
+  <!-- Modal -->
+  <div class="modal" id="modal" role="dialog" aria-modal="true">
+    <div class="modal__caja">
+      <button class="modal__cerrar" id="modalCerrar" type="button" aria-label="Cerrar">×</button>
+      <div id="modalCuerpo"></div>
+    </div>
+  </div>
+
+  <div class="aviso" id="aviso" role="status"></div>
+
+  <script src="js/admin.js"></script>
+</body>
+</html>
