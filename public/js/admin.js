@@ -1096,7 +1096,8 @@ const opciones = (lista, actual) =>
   lista.map(([v, t]) => `<option value="${esc(v)}" ${String(v) === String(actual) ? 'selected' : ''}>${esc(t)}</option>`).join('');
 const opcionesPlan = (sistema, actual) => {
   const planes = sistema?.planes || [];
-  if (!planes.length) return '<option value="">(este software no tiene planes)</option>';
+  // Software sin planes (p. ej. uno privado): la licencia queda como "Personalizado".
+  if (!planes.length) return `<option value="personalizado">Personalizado (el software no tiene planes)</option>`;
   return opciones(planes.map((p) => [p.codigo, `${p.nombre} · ${precioTexto(p)}`]), actual);
 };
 const sistemaPorId = (id) => sistemas.find((s) => String(s._id) === String(id));
@@ -1148,7 +1149,7 @@ function formLicencia(l, prefill = {}) {
     return;
   }
   const sistema = sistemaPorId(actualId) || disponibles[0];
-  const planCodigo = l?.plan || prefill.plan || sistema.planes?.[0]?.codigo || '';
+  const planCodigo = l?.plan || prefill.plan || sistema.planes?.[0]?.codigo || 'personalizado';
   const plan = planDe(sistema, planCodigo);
   const maxUsuarios = l ? l.maxUsuarios ?? '' : plan?.maxUsuarios ?? '';
   const inicio = l ? aInput(l.fechaInicio) : hoy();
