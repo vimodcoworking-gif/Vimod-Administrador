@@ -420,11 +420,6 @@ async function formEmpresa({ licenciaId } = {}) {
   const vence = lic?.fechaVencimiento ? aInput(lic.fechaVencimiento) : sumarMeses(hoy(), lic?.periodo === 'mes' ? 1 : 12);
   const plan = lic?.periodo === 'mes' ? 'mensual' : lic?.periodo === 'año' ? 'anual' : 'anual';
   const nombre = u?.empresa || u?.nombre || '';
-  // Softwares del catálogo: elegir uno crea la licencia del cliente al crear el sistema.
-  const catalogo = u ? (sistemas.length ? sistemas : await cargarSistemas()).filter((s) => s.activo !== false) : [];
-  const opcLicencias = opciones(licencias.map((l) => [l._id, `${l.sistemaNombre} · ${l.planNombre}${l.fechaVencimiento ? ' · vence ' + fechaDia(l.fechaVencimiento) : ''}`]), licenciaId || '');
-  const opcCatalogo = opciones(catalogo.map((s) => ['nuevo:' + s._id, `${s.nombre} (crear licencia nueva)`]), '');
-  let licenciaCreada = null; // si falla la creación del sistema, al reintentar no se duplica la licencia
   abrirModal(`
     <span class="etiqueta">Servidor VIMOD CONTROL</span>
     <h2 class="titulo">Crear sistema <strong>de empresa</strong></h2>
@@ -433,9 +428,8 @@ async function formEmpresa({ licenciaId } = {}) {
       ${u ? `<input type="hidden" name="usuario" value="${esc(u._id)}">`
         : `<div class="campo"><label>Cliente</label><select name="usuario"><option value="">(sin cliente, vincular después)</option>${opciones(usuarios.map((x) => [x._id, `${x.nombre} · ${x.email}`]), '')}</select></div>`}
       ${u ? `<div class="campo"><label>Licencia vinculada (renovarla renueva el sistema)</label><select name="licencia">
-          <option value="">(ninguna)</option>
-          ${opcLicencias ? `<optgroup label="Licencias del cliente">${opcLicencias}</optgroup>` : ''}
-          ${opcCatalogo ? `<optgroup label="Softwares (se crea la licencia)">${opcCatalogo}</optgroup>` : ''}</select></div>` : ''}
+          <option value="">(ninguna)</option>${opciones(licencias.map((l) => [l._id, `${l.sistemaNombre} · ${l.planNombre}${l.fechaVencimiento ? ' · vence ' + fechaDia(l.fechaVencimiento) : ''}`]), licenciaId || '')}</select>
+          <small class="ayuda">Para softwares que solo se usan por enlace no hace falta crear un sistema: basta con asignar la licencia.</small></div>` : ''}
       <div class="form__fila">
         <div class="campo"><label>Nombre de la empresa</label><input name="nombre" required maxlength="150" value="${esc(nombre)}" data-slug-origen></div>
         <div class="campo"><label>Código (en la dirección)</label><input name="slug" required maxlength="24" pattern="[a-z0-9-]+" value="${esc(slugDe(nombre))}" data-slug>
@@ -457,22 +451,10 @@ async function formEmpresa({ licenciaId } = {}) {
     </form>`,
   async (datos) => {
     if (!u && !datos.usuario) delete datos.usuario;
-    if (datos.licencia?.startsWith('nuevo:')) {
-      const s = sistemaPorId(datos.licencia.slice(6));
-      if (licenciaCreada?.sistema !== String(s._id)) {
-        const periodo = { mensual: 'mes', anual: 'año', 'pago unico': 'pago único' }[datos.plan] || '';
-        const nueva = await api('/licencias', { method: 'POST', body: {
-          usuario: u._id, sistema: s._id, plan: s.planes?.[0]?.codigo || 'personalizado', periodo,
-          fechaInicio: hoy(), fechaVencimiento: datos.vence, estado: 'activa', maxUsuarios: s.planes?.[0]?.maxUsuarios ?? '',
-        } });
-        licenciaCreada = { sistema: String(s._id), id: nueva._id };
-      }
-      datos.licencia = licenciaCreada.id;
-    }
     if (!datos.licencia) delete datos.licencia;
     await api('/empresas', { method: 'POST', body: datos });
     cerrarModal();
-    aviso(licenciaCreada ? 'Licencia creada y pedido enviado: el servidor creará el sistema en el próximo minuto.' : 'Pedido enviado: el servidor creará el sistema en el próximo minuto.');
+    aviso('Pedido enviado: el servidor creará el sistema en el próximo minuto.');
     recargar();
   });
 }
