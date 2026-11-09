@@ -407,6 +407,36 @@ router.post('/empresas/:id/acceso-super', idValido, a(async (req, res) => {
   }
   if ((process.env.AGENTE_TOKEN || '').length < 48) return res.status(503).json({ error: 'Falta AGENTE_TOKEN en el Panel' });
   if (!e.accesoSuper) {
+    // Diagnóstico: ¿el agente del servidor se conecta? ¿ya respondió sin habilitar el acceso?
+    const agente = await Contenido.findById('agente').lean();
+    const contacto = agente && agente.datos && agente.datos.ultimoContacto ? new Date(agente.datos.ultimoContacto) : null;
+    if (!contacto || Date.now() - contacto > 10 * 60e3) {
+      const cuando = contacto ? `desde el ${contacto.toLocaleString('es-PE', { timeZone: 'America/Lima' })}` : 'nunca';
+      return res.status(409).json({
+        error: `El agente del servidor no se conecta con el Panel (${cuando}). En el servidor de las empresas, revisa servidor.php → panel.url y panel.token (igual a AGENTE_TOKEN) y que la tarea programada del agente esté activa.`
+      });
+    }
+    const ultima = await Tarea.findOne({ empresa: e._id, tipo: 'licencia' }).sort('-createdAt').lean();
+    if (ultima && ultima.estado === 'hecha') {
+      // Se pide de nuevo, por si ya se corrigió el servidor: el próximo intento usa la respuesta nueva.
+      await Tarea.create({ tipo: 'licencia', datos: { slug: e.slug }, empresa: e._id });
+      const lic = (ultima.resultado && ultima.resultado.licencia) || {};
+      if (!('acceso_super' in lic)) {
+        return res.status(409).json({
+          error: 'Las herramientas del servidor están desactualizadas y no habilitan este acceso. Copia la versión nueva de vimod-empresas\\herramientas (lib.php y agente.php) al servidor, pulsa "Actualizar" en esta empresa y vuelve a intentarlo.'
+        });
+      }
+      if (lic.acceso_super === false) {
+        return res.status(409).json({
+          error: 'El servidor no tiene un token válido para el acceso: en servidor.php, panel.token debe ser igual a AGENTE_TOKEN del Panel (48 caracteres o más).'
+        });
+      }
+    }
+    if (ultima && ultima.estado === 'error') {
+      // El último intento falló: se muestra el motivo y se reintenta.
+      await Tarea.create({ tipo: 'licencia', datos: { slug: e.slug }, empresa: e._id });
+      return res.status(409).json({ error: `El servidor no pudo habilitar el acceso: ${ultima.error || 'error desconocido'}. Se volvió a intentar; prueba en 1 o 2 minutos.` });
+    }
     // Sistemas creados antes de esta función: el servidor reescribe su licencia con la clave de acceso.
     const pendiente = await Tarea.exists({ empresa: e._id, tipo: 'licencia', estado: { $in: ['pendiente', 'enviada'] } });
     if (!pendiente) await Tarea.create({ tipo: 'licencia', datos: { slug: e.slug }, empresa: e._id });
