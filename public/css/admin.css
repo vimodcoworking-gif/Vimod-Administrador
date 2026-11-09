@@ -89,7 +89,15 @@ img { max-width: 100%; display: block; }
 .menu-movil { display: none; }
 
 .cabecera { display: flex; justify-content: space-between; align-items: end; gap: 16px; flex-wrap: wrap; margin-bottom: 28px; }
-.cabecera > div { display: grid; gap: 8px; }
+/* Solo el bloque del título va en columna; los grupos de botones quedan en fila */
+.cabecera > div:not(.acciones) { display: grid; gap: 8px; min-width: 0; }
+.cabecera .titulo { overflow-wrap: anywhere; }
+/* Barra de acciones bajo el título: edición a la izquierda, estado/eliminar a la derecha */
+.barra-acciones {
+  display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap;
+  margin: -8px 0 28px; padding-bottom: 22px; border-bottom: 1px solid var(--gris-oscuro);
+}
+.barra-acciones .btn { justify-content: center; }
 .volver { font-size: .7rem; letter-spacing: .2em; text-transform: uppercase; color: var(--gris); }
 .volver:hover { color: var(--blanco); }
 
@@ -129,8 +137,12 @@ a.tile:hover { border-color: var(--gris); }
 .insignia--vencida, .insignia--suspendida, .insignia--inactivo, .insignia--descartada { border-style: dashed; color: var(--gris); }
 
 /* Ficha de usuario */
-.ficha { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1px; background: var(--gris-oscuro); border: 1px solid var(--gris-oscuro); }
-.ficha div { background: var(--carbon); padding: 16px 18px; min-width: 0; }
+/* Líneas de la grilla con sombras: los huecos al final de la última fila no se ven grises */
+.ficha {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  background: var(--carbon); border: 1px solid var(--gris-oscuro); overflow: hidden;
+}
+.ficha div { background: var(--carbon); padding: 16px 18px; min-width: 0; box-shadow: 1px 0 0 var(--gris-oscuro), 0 1px 0 var(--gris-oscuro); }
 .ficha b { display: block; font-size: .6rem; letter-spacing: .18em; text-transform: uppercase; color: var(--gris); font-weight: 500; margin-bottom: 4px; }
 .ficha span { overflow-wrap: anywhere; }
 
@@ -249,4 +261,15 @@ a.tile:hover { border-color: var(--gris); }
   .tabla td.tabla__vacia { display: block; text-align: center; }
   .tabla td.tabla__vacia::before { content: none; }
   .mensaje-texto { max-width: none; }
+  /* Botones a todo el ancho, de a dos por fila */
+  .barra-acciones { margin-top: -12px; }
+  .barra-acciones .acciones { width: 100%; }
+  .barra-acciones .acciones .btn { flex: 1 1 calc(50% - 4px); }
+  .cabecera > .btn, .cabecera > .acciones { width: 100%; }
+  .cabecera > .btn, .cabecera > .acciones .btn { justify-content: center; flex: 1 1 auto; }
+  .ficha { grid-template-columns: 1fr 1fr; }
+  .ficha div { padding: 14px; }
+}
+@media (max-width: 380px) {
+  .ficha { grid-template-columns: 1fr; }
 }

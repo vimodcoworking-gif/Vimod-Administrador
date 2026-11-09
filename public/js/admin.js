@@ -260,13 +260,17 @@ async function vistaUsuario(id) {
 
   return `
     <a class="volver" href="#/usuarios">← Usuarios</a>
-    ${cabecera('Usuario', esc(u.nombre), `
+    ${cabecera('Usuario', esc(u.nombre))}
+    <div class="barra-acciones">
       <div class="acciones">
         <button class="btn btn--borde btn--chico" data-accion="editar-usuario">Editar datos</button>
         <button class="btn btn--borde btn--chico" data-accion="clave-usuario">Cambiar contraseña</button>
+      </div>
+      <div class="acciones">
         <button class="btn btn--borde btn--chico" data-accion="activar-usuario">${u.activo ? 'Desactivar' : 'Activar'}</button>
         <button class="btn btn--peligro btn--chico" data-accion="eliminar-usuario">Eliminar</button>
-      </div>`)}
+      </div>
+    </div>
     <div class="ficha">
       <div><b>Correo</b><span>${esc(u.email)}</span></div>
       <div><b>Empresa</b><span>${esc(u.empresa) || '—'}</span></div>
