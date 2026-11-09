@@ -564,7 +564,14 @@ function limpiarContenido(d) {
       titulo: txt(p.titulo, 200),
       texto: txt(p.texto, 400),
       items: arr(p.items).slice(0, 40)
-        .map((i) => ({ titulo: txt(i.titulo, 120), categoria: txt(i.categoria, 60), imagen: urlImagen(i.imagen) }))
+        .map((i) => ({
+          titulo: txt(i.titulo, 120),
+          categoria: txt(i.categoria, 60),
+          imagen: urlImagen(i.imagen),
+          descripcion: txt(i.descripcion, 3000),
+          enlace: /^https?:\/\/\S+$/i.test(txt(i.enlace, 300)) ? txt(i.enlace, 300) : '',
+          imagenes: arr(i.imagenes).map(urlImagen).filter(Boolean).slice(0, 12)
+        }))
         .filter((i) => i.titulo || i.imagen)
     };
   }

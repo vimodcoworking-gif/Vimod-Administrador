@@ -712,8 +712,27 @@ const proyectoEditor = (p = {}) => `
       <div class="campo"><label>Nombre del proyecto</label><input data-campo="titulo" maxlength="120" value="${esc(p.titulo)}"></div>
       <div class="campo"><label>Categoría</label><input data-campo="categoria" maxlength="60" value="${esc(p.categoria)}" placeholder="Residencial, Corporativo…"></div>
     </div>
-    ${campoImagen('', p.imagen)}
+    ${campoImagen('', p.imagen, 'Imagen principal (portada)')}
+    <div class="campo"><label>Descripción (se muestra al hacer clic en el proyecto; deja una línea en blanco entre párrafos)</label><textarea data-campo="descripcion" rows="5" maxlength="3000">${esc(p.descripcion)}</textarea></div>
+    <div class="campo"><label>Enlace del proyecto (botón “Visitar sitio”)</label><input data-campo="enlace" type="url" maxlength="300" value="${esc(p.enlace)}" placeholder="https://…"></div>
+    <h3 class="editor__subtitulo">Imágenes de ejemplo</h3>
+    <div class="repetibles" data-lista="galeria">${(p.imagenes || []).map(imagenProyectoEditor).join('')}</div>
+    <div><button type="button" class="btn btn--borde btn--chico" data-accion="agregar-imagen-proyecto">+ Agregar imagen de ejemplo</button></div>
   </fieldset>`;
+
+// Imagen extra de un proyecto (se ve en la ventana de detalle)
+const imagenProyectoEditor = (url = '') => `
+  <div class="repetible galeria-editor">
+    <div class="repetible__cabecera">
+      <b>Imagen de ejemplo</b>
+      <div class="acciones">
+        <button type="button" class="btn btn--borde btn--chico" data-accion="subir">↑</button>
+        <button type="button" class="btn btn--borde btn--chico" data-accion="bajar">↓</button>
+        <button type="button" class="btn btn--peligro btn--chico" data-accion="quitar">Quitar</button>
+      </div>
+    </div>
+    ${campoImagen('', typeof url === 'string' ? url : '', 'Imagen')}
+  </div>`;
 
 async function vistaContenido() {
   const c = await api('/contenido');
@@ -742,7 +761,7 @@ async function vistaContenido() {
           <div class="campo"><label>Título</label><input data-campo="titulo" maxlength="200" value="${esc(p.titulo)}">${ayudaNegrita}</div>
         </div>
         <div class="campo"><label>Texto</label><input data-campo="texto" maxlength="400" value="${esc(p.texto)}"></div>
-        <p class="texto-gris">El primer proyecto se muestra más grande.</p>
+        <p class="texto-gris">Al hacer clic en un proyecto se abre una ventana con su descripción, sus imágenes de ejemplo y el botón al sitio.</p>
         <div class="repetibles" data-lista="items">${(p.items || []).map(proyectoEditor).join('')}</div>
         <button type="button" class="btn btn--borde" data-accion="agregar-proyecto">+ Agregar proyecto</button>
       </section>
@@ -790,7 +809,14 @@ function leerContenido(form) {
       parrafos: nos.parrafos.split(/\n\s*\n/).map((x) => x.trim()).filter(Boolean),
       cifras: $$('.cifra-editor', form).map((f) => campos2(f))
     },
-    proyectos: { ...campos(secc('proyectos')), items: $$('.proyecto-editor', form).map((f) => campos2(f)) },
+    proyectos: {
+      ...campos(secc('proyectos')),
+      items: $$('.proyecto-editor', form).map((f) => ({
+        // Campos del proyecto, sin los de sus imágenes de ejemplo
+        ...Object.fromEntries($$('[data-campo]', f).filter((i) => !i.closest('.galeria-editor')).map((i) => [i.dataset.campo, i.value])),
+        imagenes: $$('.galeria-editor [data-imagen]', f).map((i) => i.value.trim()).filter(Boolean)
+      }))
+    },
     softwares: campos(secc('softwares')),
     contacto: campos(secc('contacto'))
   };
@@ -1235,6 +1261,8 @@ const acciones = {
   'agregar-plan': () => agregarRepetible($('#planesEditor'), planEditor()),
   'agregar-cifra': () => agregarRepetible($('[data-lista="cifras"]'), cifraEditor()),
   'agregar-proyecto': () => agregarRepetible($('[data-lista="items"]'), proyectoEditor()),
+  'agregar-imagen-proyecto': (el) =>
+    agregarRepetible($('[data-lista="galeria"]', el.closest('.proyecto-editor')), imagenProyectoEditor()),
   'subir': (el) => moverRepetible(el, -1),
   'bajar': (el) => moverRepetible(el, 1),
   'quitar': (el) => {
