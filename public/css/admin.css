@@ -193,7 +193,7 @@ a.tile:hover { border-color: var(--gris); }
 .barra-uso span.alta { background: #f5a524; }
 .barra-uso span.llena { background: #ff8a8a; }
 .aviso-caja { margin: 18px 0 4px; border: 1px solid var(--gris); border-left: 3px solid var(--blanco); background: var(--grafito); padding: 14px 18px; display: grid; gap: 6px; font-size: .88rem; }
-.insignia--pendiente { border-style: dotted; }
+.insignia--pendiente, .insignia--eliminando { border-style: dotted; }
 .insignia--error { border-color: #5a2a2a; color: #ff8a8a; }
 
 /* ===== Editores (software y contenido web) ===== */

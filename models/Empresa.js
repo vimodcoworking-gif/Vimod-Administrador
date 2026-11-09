@@ -12,8 +12,9 @@ const EmpresaSchema = new mongoose.Schema(
     adminUsuario: { type: String, trim: true, lowercase: true, default: 'admin' },
     adminNombre: { type: String, trim: true, maxlength: 120 },
     adminEmail: { type: String, trim: true, lowercase: true, maxlength: 160 },
-    // pendiente = esperando al servidor; lista = creada; error = el servidor no pudo crearla
-    estado: { type: String, enum: ['pendiente', 'lista', 'error'], default: 'pendiente' },
+    // pendiente = esperando al servidor; lista = creada; error = el servidor no pudo crearla;
+    // eliminando = se pidió borrarla del servidor (al terminar, se borra del Panel)
+    estado: { type: String, enum: ['pendiente', 'lista', 'error', 'eliminando'], default: 'pendiente' },
     error: { type: String, maxlength: 500 },
     url: { type: String, trim: true, maxlength: 400 },
     baseDatos: { type: String, trim: true, maxlength: 80 },

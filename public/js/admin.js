@@ -298,7 +298,7 @@ async function vistaUsuario(id) {
 // ---- Sistemas de empresa (VIMOD CONTROL en el servidor) ----
 const slugDe = (t) => String(t || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
   .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 24).replace(/-+$/, '');
-const ESTADO_EMPRESA = { pendiente: 'Creándose…', lista: 'Creada', error: 'Error' };
+const ESTADO_EMPRESA = { pendiente: 'Creándose…', lista: 'Creada', error: 'Error', eliminando: 'Eliminándose…' };
 
 function textoLicenciaEmpresa(e) {
   const l = e.licenciaServidor;
@@ -337,8 +337,9 @@ function tarjetaEmpresa(e) {
         <span class="insignia insignia--${e.estado === 'lista' ? (activa && e.licenciaServidor?.vigente !== false ? 'activa' : 'suspendida') : e.estado}">${
           esc(lista ? (activa ? (e.licenciaServidor?.vigente === false ? 'Vencida' : 'Activa') : 'Suspendida') : ESTADO_EMPRESA[e.estado])}</span>
       </div>
-      ${e.estado === 'error' ? `<p class="empresa__error">${esc(e.error)}</p>` : ''}
+      ${e.error ? `<p class="empresa__error">${esc(e.error)}</p>` : ''}
       ${e.estado === 'pendiente' ? '<p class="texto-gris">El servidor lo creará en el próximo minuto (si el agente está encendido).</p>' : ''}
+      ${e.estado === 'eliminando' ? '<p class="texto-gris">El servidor lo eliminará en el próximo minuto (si el agente está encendido). Después desaparece de esta lista.</p>' : ''}
       <ul class="empresa__datos">
         ${e.url ? `<li><b>Dirección</b><a href="${esc(e.url)}" target="_blank" rel="noopener">${esc(e.url)}</a></li>` : ''}
         <li><b>Administrador</b>${esc(e.adminUsuario || 'admin')}</li>
@@ -354,9 +355,10 @@ function tarjetaEmpresa(e) {
         ${lista && e.tieneClave ? `<button class="btn btn--borde btn--chico" data-accion="ver-clave-empresa" data-id="${esc(e._id)}">Ver contraseña</button>` : ''}
         ${lista ? `<button class="btn btn--borde btn--chico" data-accion="renovar-empresa" data-id="${esc(e._id)}">Renovar</button>
           <button class="btn btn--borde btn--chico" data-accion="estado-empresa" data-id="${esc(e._id)}" data-estado="${activa ? 'suspendida' : 'activa'}">${activa ? 'Suspender' : 'Reactivar'}</button>
-          <button class="btn btn--borde btn--chico" data-accion="actualizar-empresa" data-id="${esc(e._id)}" title="Pasar a esta empresa los cambios de la plantilla">Actualizar</button>` : ''}
+          <button class="btn btn--borde btn--chico" data-accion="actualizar-empresa" data-id="${esc(e._id)}" title="Pasar a esta empresa los cambios de la plantilla">Actualizar</button>
+          <button class="btn btn--peligro btn--chico" data-accion="eliminar-empresa" data-id="${esc(e._id)}" title="Borra del servidor su sistema y su base de datos">Eliminar</button>` : ''}
         ${e.estado === 'error' ? `<button class="btn btn--chico" data-accion="reintentar-empresa" data-id="${esc(e._id)}">Reintentar</button>` : ''}
-        ${!lista ? `<button class="btn btn--peligro btn--chico" data-accion="quitar-empresa" data-id="${esc(e._id)}">Quitar</button>` : ''}
+        ${e.estado === 'pendiente' || e.estado === 'error' ? `<button class="btn btn--peligro btn--chico" data-accion="quitar-empresa" data-id="${esc(e._id)}">Quitar</button>` : ''}
       </div>
     </article>`;
 }
@@ -380,12 +382,12 @@ async function vistaServidor() {
       <td data-col="Empresa">${esc(e.nombre)}<small>${esc(e.slug)}</small></td>
       <td data-col="Cliente">${e.usuario ? `<a href="#/usuarios/${esc(e.usuario._id)}">${esc(e.usuario.nombre)}</a><small>${esc(e.usuario.email)}</small>`
         : `<button class="btn btn--borde btn--chico" data-accion="vincular-empresa" data-id="${esc(e._id)}">Vincular cliente</button>`}</td>
-      <td data-col="Estado">${insignia({ pendiente: 'pendiente', lista: 'activo', error: 'inactivo' }[e.estado])} <small>${esc(ESTADO_EMPRESA[e.estado])}</small></td>
+      <td data-col="Estado">${insignia({ pendiente: 'pendiente', lista: 'activo', error: 'inactivo', eliminando: 'pendiente' }[e.estado])} <small>${esc(ESTADO_EMPRESA[e.estado])}</small></td>
       <td data-col="Licencia">${esc(textoLicenciaEmpresa(e))}</td>
       <td data-col="Almacenamiento">${e.estado === 'lista' ? `${esc(textoBytes(e.usoBytes))}<small>de ${esc(textoGb(e.almacenamientoGb))}</small>` : '—'}</td>
       <td data-col="Dirección">${e.url ? `<a href="${esc(e.url)}" target="_blank" rel="noopener">Abrir ↗</a>` : '—'}</td>
     </tr>`).join('');
-  const TAREA = { crear: 'Crear empresa', licencia: 'Licencia', actualizar: 'Actualizar' };
+  const TAREA = { crear: 'Crear empresa', licencia: 'Licencia', actualizar: 'Actualizar', eliminar: 'Eliminar empresa' };
   const filasTareas = s.tareas.map((t) => `
     <tr>
       <td data-col="Fecha">${fecha(t.createdAt)} <small>${new Date(t.createdAt).toLocaleTimeString('es', { hour: '2-digit', minute: '2-digit' })}</small></td>
@@ -477,6 +479,28 @@ function formRenovar(e) {
     await api(`/empresas/${e._id}/licencia`, { method: 'POST', body: { vence: datos.vence, estado: datos.activar ? 'activa' : undefined } });
     cerrarModal();
     aviso('Renovación enviada: se aplica en el servidor en el próximo minuto.');
+    recargar();
+  });
+}
+
+function formEliminarEmpresa(e) {
+  abrirModal(`
+    <span class="etiqueta">${esc(e.nombre)}</span>
+    <h2 class="titulo">Eliminar <strong>sistema</strong></h2>
+    <p class="texto-gris" style="margin-bottom:12px">Se borra del servidor su sistema: la dirección deja de funcionar y se elimina su base de datos
+      ${e.baseDatos ? `(<b>${esc(e.baseDatos)}</b>)` : ''} con todos sus registros. <b>No se puede deshacer.</b></p>
+    <p class="texto-gris" style="margin-bottom:16px">Sus archivos subidos se guardan en el servidor, en <code>vimod-empresas\\eliminadas\\</code>.</p>
+    <form class="form">
+      <div class="campo"><label>Para confirmar, escribe el código: <b>${esc(e.slug)}</b></label>
+        <input name="confirmar" required autocomplete="off"></div>
+      ${e.licencia ? '<label class="check"><input type="checkbox" name="borrarLicencia" checked> Eliminar también la licencia vinculada del cliente</label>' : ''}
+      <button class="btn btn--peligro" type="submit">Eliminar definitivamente</button>
+      <p class="estado" role="status"></p>
+    </form>`,
+  async (datos) => {
+    await api(`/empresas/${e._id}/eliminar`, { method: 'POST', body: { confirmar: datos.confirmar, borrarLicencia: !!datos.borrarLicencia } });
+    cerrarModal();
+    aviso('Eliminación enviada: el servidor la borra en el próximo minuto.');
     recargar();
   });
 }
@@ -1257,6 +1281,7 @@ const acciones = {
     aviso('Se volverá a intentar en el próximo minuto');
     recargar();
   },
+  'eliminar-empresa': (el) => formEliminarEmpresa(vistaActual.empresas.get(el.dataset.id)),
   'quitar-empresa': (el) => confirmarYBorrar('¿Quitar este pedido? (No se creó en el servidor.)', '/empresas/' + el.dataset.id, 'Pedido quitado'),
   'vincular-empresa': (el) => formVincular(vistaActual.empresas.get(el.dataset.id)),
   'editar-licencia': (el) => formLicencia(vistaActual.licencias.get(el.dataset.id)),

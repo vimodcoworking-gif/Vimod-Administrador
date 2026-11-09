@@ -107,7 +107,14 @@ router.post('/tareas/:id/resultado', a(async (req, res) => {
     }
   } else if (ok && tarea.tipo === 'licencia' && empresa) {
     empresa.set({ licenciaServidor: resumenLicencia(r.licencia), ...extrasLicencia(r.licencia), sincronizada: new Date() });
+    if (empresa.estado === 'lista') empresa.error = undefined;
     if (r.licencia && fechaValida(r.licencia.vence)) empresa.vence = r.licencia.vence;
+    await empresa.save();
+  } else if (ok && tarea.tipo === 'eliminar' && empresa) {
+    await empresa.deleteOne();
+  } else if (!ok && tarea.tipo === 'eliminar' && empresa) {
+    // No se pudo: vuelve a quedar como creada, con el motivo a la vista.
+    empresa.set({ estado: 'lista', error: `No se pudo eliminar: ${String(req.body.error || 'error desconocido')}`.slice(0, 500) });
     await empresa.save();
   } else if (!ok && tarea.tipo === 'crear' && empresa) {
     empresa.set({ estado: 'error', error: String(req.body.error || 'Error desconocido').slice(0, 500) });
@@ -144,6 +151,7 @@ router.post('/inventario', a(async (req, res) => {
     if (Number.isFinite(Number(e.uso_bytes))) cambios.usoBytes = Number(e.uso_bytes);
     if (e.licencia && fechaValida(e.licencia.vence)) cambios.vence = e.licencia.vence;
     const existente = await Empresa.findOne({ slug });
+    if (existente && existente.estado === 'eliminando') continue; // el agente la está borrando
     if (existente) {
       existente.set(cambios);
       if (existente.estado !== 'lista') existente.set({ estado: 'lista', error: undefined });

@@ -478,11 +478,32 @@ router.delete('/empresas/:id/clave', idValido, a(async (req, res) => {
   res.json({ ok: true });
 }));
 
+// Eliminar del servidor el sistema de una empresa (carpeta, base de datos y usuario de MySQL).
+// El agente guarda sus archivos en vimod-empresas\eliminadas\ y, al terminar, se borra del Panel.
+router.post('/empresas/:id/eliminar', idValido, a(async (req, res) => {
+  const e = await Empresa.findById(req.params.id);
+  if (!e) return res.status(404).json({ error: 'Empresa no encontrada' });
+  if (e.estado === 'eliminando') return res.status(409).json({ error: 'Esta empresa ya se está eliminando.' });
+  if (e.estado !== 'lista') return res.status(409).json({ error: 'Esta empresa no está creada en el servidor: usa "Quitar".' });
+  if (txt(req.body.confirmar, 30).toLowerCase() !== e.slug) {
+    return res.status(400).json({ error: `Para confirmar, escribe el código "${e.slug}".` });
+  }
+  // Lo que estaba por hacerse en esta empresa ya no sirve.
+  await Tarea.deleteMany({ empresa: e._id, estado: 'pendiente' });
+  if (req.body.borrarLicencia && e.licencia) {
+    await Licencia.deleteOne({ _id: e.licencia });
+    e.licencia = null;
+  }
+  e.set({ estado: 'eliminando', error: undefined });
+  await e.save();
+  res.status(201).json(await Tarea.create({ tipo: 'eliminar', datos: { slug: e.slug }, empresa: e._id }));
+}));
+
 // Quitar del Panel una empresa que no llegó a crearse (no toca el servidor)
 router.delete('/empresas/:id', idValido, a(async (req, res) => {
   const e = await Empresa.findById(req.params.id);
   if (!e) return res.status(404).json({ error: 'Empresa no encontrada' });
-  if (e.estado === 'lista') return res.status(409).json({ error: 'Esta empresa ya existe en el servidor. Suspéndela; borrarla del servidor es manual (ver LEEME).' });
+  if (e.estado === 'lista' || e.estado === 'eliminando') return res.status(409).json({ error: 'Esta empresa existe en el servidor: usa "Eliminar".' });
   if (await Tarea.exists({ empresa: e._id, tipo: 'crear', estado: 'enviada' })) {
     return res.status(409).json({ error: 'El servidor está creando esta empresa ahora. Espera a que termine.' });
   }
