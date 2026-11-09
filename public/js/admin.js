@@ -420,10 +420,13 @@ async function formEmpresa({ licenciaId } = {}) {
   const vence = lic?.fechaVencimiento ? aInput(lic.fechaVencimiento) : sumarMeses(hoy(), lic?.periodo === 'mes' ? 1 : 12);
   const plan = lic?.periodo === 'mes' ? 'mensual' : lic?.periodo === 'año' ? 'anual' : 'anual';
   const nombre = u?.empresa || u?.nombre || '';
-  // Softwares del catálogo: elegir uno solo da acceso por enlace (crea la licencia, no un sistema en el servidor).
+  // Softwares del catálogo: se crea su licencia al enviar. Los "en servidor" crean además el sistema;
+  // los demás solo dan acceso por enlace (tarjeta en la cuenta del cliente).
   const catalogo = u ? (sistemas.length ? sistemas : await cargarSistemas()).filter((s) => s.activo !== false) : [];
   const opcLicencias = opciones(licencias.map((l) => [l._id, `${l.sistemaNombre} · ${l.planNombre}${l.fechaVencimiento ? ' · vence ' + fechaDia(l.fechaVencimiento) : ''}`]), licenciaId || '');
-  const opcCatalogo = opciones(catalogo.map((s) => ['enlace:' + s._id, `${s.nombre}`]), '');
+  const opcServidor = opciones(catalogo.filter(enServidor).map((s) => ['nuevo:' + s._id, s.nombre]), '');
+  const opcEnlace = opciones(catalogo.filter((s) => !enServidor(s)).map((s) => ['enlace:' + s._id, s.nombre]), '');
+  let licenciaCreada = null; // si falla la creación del sistema, al reintentar no se duplica la licencia
   abrirModal(`
     <span class="etiqueta">Servidor VIMOD CONTROL</span>
     <h2 class="titulo">Crear sistema <strong>de empresa</strong></h2>
@@ -433,9 +436,11 @@ async function formEmpresa({ licenciaId } = {}) {
         : `<div class="campo"><label>Cliente</label><select name="usuario"><option value="">(sin cliente, vincular después)</option>${opciones(usuarios.map((x) => [x._id, `${x.nombre} · ${x.email}`]), '')}</select></div>`}
       ${u ? `<div class="campo"><label>Licencia vinculada (renovarla renueva el sistema)</label><select name="licencia" data-cambio="licencia-empresa">
           <option value="">(ninguna)</option>
-          ${opcLicencias ? `<optgroup label="Crear sistema en el servidor con su licencia">${opcLicencias}</optgroup>` : ''}
-          ${opcCatalogo ? `<optgroup label="Solo dar acceso por enlace (no crea sistema)">${opcCatalogo}</optgroup>` : ''}</select>
-          <small class="ayuda" data-ayuda-enlace hidden>Solo se crea la licencia: el cliente verá la tarjeta del sistema con su enlace de acceso. No se crea nada en este servidor.</small></div>` : ''}
+          ${opcLicencias ? `<optgroup label="Licencias del cliente">${opcLicencias}</optgroup>` : ''}
+          ${opcServidor ? `<optgroup label="Nueva licencia + sistema en el servidor">${opcServidor}</optgroup>` : ''}
+          ${opcEnlace ? `<optgroup label="Solo acceso por enlace (no crea sistema)">${opcEnlace}</optgroup>` : ''}</select>
+          <small class="ayuda" data-ayuda-enlace hidden>Solo se crea la licencia: el cliente verá la tarjeta del sistema con su enlace de acceso. No se crea nada en este servidor.</small></div>
+        <div class="campo" data-plan-software hidden><label>Plan del software</label><select name="planSoftware" disabled></select></div>` : ''}
       <div class="form__fila" data-solo-servidor>
         <div class="campo"><label>Nombre de la empresa</label><input name="nombre" required maxlength="150" value="${esc(nombre)}" data-slug-origen></div>
         <div class="campo"><label>Código (en la dirección)</label><input name="slug" required maxlength="24" pattern="[a-z0-9-]+" value="${esc(slugDe(nombre))}" data-slug>
@@ -443,7 +448,7 @@ async function formEmpresa({ licenciaId } = {}) {
       </div>
       <div class="form__fila">
         <div class="campo"><label>Vence</label><input name="vence" type="date" required value="${vence}"></div>
-        <div class="campo"><label>Plan</label><select name="plan">${opciones([['mensual', 'Mensual'], ['anual', 'Anual'], ['pago unico', 'Pago único']], plan)}</select></div>
+        <div class="campo"><label>Facturación</label><select name="plan">${opciones([['mensual', 'Mensual'], ['anual', 'Anual'], ['pago unico', 'Pago único']], plan)}</select></div>
       </div>
       <div class="campo" data-solo-servidor><label>Almacenamiento para sus archivos</label><select name="almacenamientoGb">${opciones(OPCIONES_GB, 10)}</select>
         <small class="ayuda">Al llegar al límite no podrán subir más archivos. Se puede cambiar después.</small></div>
@@ -456,18 +461,28 @@ async function formEmpresa({ licenciaId } = {}) {
       <p class="estado" role="status"></p>
     </form>`,
   async (datos) => {
-    if (datos.licencia?.startsWith('enlace:')) {
-      // Software externo: solo la licencia (tarjeta + enlace en la cuenta del cliente).
-      const s = sistemaPorId(datos.licencia.slice(7));
-      await api('/licencias', { method: 'POST', body: {
-        usuario: u._id, sistema: s._id, plan: s.planes?.[0]?.codigo || 'personalizado',
-        periodo: { mensual: 'mes', anual: 'año', 'pago unico': 'pago único' }[datos.plan] || '',
-        fechaInicio: hoy(), fechaVencimiento: datos.vence, estado: 'activa', maxUsuarios: s.planes?.[0]?.maxUsuarios ?? '',
-      } });
-      cerrarModal();
-      aviso(`Acceso a ${s.nombre} asignado: el cliente ya ve la tarjeta con su enlace.`);
-      return recargar();
+    const [modo, sistemaId] = (datos.licencia || '').split(':');
+    if (modo === 'enlace' || modo === 'nuevo') {
+      // Primero la licencia del software elegido (con el plan elegido).
+      const s = sistemaPorId(sistemaId);
+      const clave = `${sistemaId}|${datos.planSoftware}`;
+      if (licenciaCreada?.clave !== clave) {
+        const nueva = await api('/licencias', { method: 'POST', body: {
+          usuario: u._id, sistema: s._id, plan: datos.planSoftware || 'personalizado',
+          periodo: { mensual: 'mes', anual: 'año', 'pago unico': 'pago único' }[datos.plan] || '',
+          fechaInicio: hoy(), fechaVencimiento: datos.vence, estado: 'activa',
+          maxUsuarios: planDe(s, datos.planSoftware)?.maxUsuarios ?? '',
+        } });
+        licenciaCreada = { clave, id: nueva._id };
+      }
+      if (modo === 'enlace') {
+        cerrarModal();
+        aviso(`Acceso a ${s.nombre} asignado: el cliente ya ve la tarjeta con su enlace.`);
+        return recargar();
+      }
+      datos.licencia = licenciaCreada.id;
     }
+    delete datos.planSoftware;
     if (!u && !datos.usuario) delete datos.usuario;
     if (!datos.licencia) delete datos.licencia;
     await api('/empresas', { method: 'POST', body: datos });
@@ -670,6 +685,7 @@ async function vistaSistema(id) {
         </div>
         <label class="check"><input type="checkbox" name="publicado" ${s.publicado !== false ? 'checked' : ''}> Publicado en la página web</label>
         <label class="check"><input type="checkbox" name="activo" ${s.activo !== false ? 'checked' : ''}> Disponible para asignar licencias</label>
+        <label class="check"><input type="checkbox" name="enServidor" ${enServidor(s) ? 'checked' : ''}> Se crea un sistema en el servidor VIMOD CONTROL (si no, el cliente solo recibe la tarjeta con el enlace)</label>
       </section>
 
       <section class="editor__bloque">
@@ -701,6 +717,7 @@ function leerSistema(form) {
   return {
     nombre: v('nombre'), etiqueta: v('etiqueta'), url: v('url'), orden: v('orden'),
     publicado: form.elements.publicado.checked, activo: form.elements.activo.checked,
+    enServidor: form.elements.enServidor.checked,
     titulo: v('titulo'), descripcion: v('descripcion'), resumen: v('resumen'), imagen: v('imagen'),
     caracteristicas: v('caracteristicas').split('\n'),
     textoPlanes: v('textoPlanes'),
@@ -1120,6 +1137,8 @@ const opcionesPlan = (sistema, actual) => {
   return opciones(planes.map((p) => [p.codigo, `${p.nombre} · ${precioTexto(p)}`]), actual);
 };
 const sistemaPorId = (id) => sistemas.find((s) => String(s._id) === String(id));
+// ¿Se instala en el servidor? Softwares antiguos sin la casilla: sí, si tienen planes.
+const enServidor = (s) => s?.enServidor ?? (s?.planes?.length > 0);
 const planDe = (sistema, codigo) => (sistema?.planes || []).find((p) => p.codigo === codigo);
 
 // ---- Duración, facturación y precio de la licencia ----
@@ -1376,13 +1395,21 @@ document.addEventListener('change', async (e) => {
   }
   if (el.dataset.cambio === 'licencia-empresa') {
     // Acceso por enlace: se ocultan (y desactivan) los datos del sistema en el servidor.
-    const enlace = el.value.startsWith('enlace:');
+    const [modo, sistemaId] = el.value.split(':');
+    const enlace = modo === 'enlace';
+    const software = enlace || modo === 'nuevo';
     el.form.querySelectorAll('[data-solo-servidor]').forEach((b) => {
       b.hidden = enlace;
       b.querySelectorAll('input, select').forEach((c) => (c.disabled = enlace));
     });
     $('[data-ayuda-enlace]', el.form).hidden = !enlace;
-    $('button[type=submit]', el.form).textContent = enlace ? 'Dar acceso' : 'Crear sistema';
+    // Plan del software elegido (solo al crear una licencia nueva)
+    const s = software ? sistemaPorId(sistemaId) : null;
+    const planSel = el.form.planSoftware;
+    planSel.innerHTML = s ? opcionesPlan(s, s.planes?.[0]?.codigo) : '';
+    planSel.disabled = !software;
+    $('[data-plan-software]', el.form).hidden = !software;
+    $('button[type=submit]', el.form).textContent = enlace ? 'Dar acceso' : modo === 'nuevo' ? 'Crear licencia y sistema' : 'Crear sistema';
   }
   if (el.dataset.cambio === 'sistema-licencia') {
     const s = sistemaPorId(el.value);

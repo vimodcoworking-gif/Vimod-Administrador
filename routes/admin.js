@@ -544,6 +544,7 @@ function datosSistema(body) {
   if (body.planes !== undefined) d.planes = limpiarPlanes(body.planes);
   if (body.activo !== undefined) d.activo = !!body.activo;
   if (body.publicado !== undefined) d.publicado = !!body.publicado;
+  if (body.enServidor !== undefined) d.enServidor = !!body.enServidor;
   if (body.orden !== undefined) d.orden = Number(body.orden) || 0;
   return d;
 }

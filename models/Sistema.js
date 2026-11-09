@@ -31,6 +31,9 @@ const SistemaSchema = new mongoose.Schema(
     planes: [PlanSchema],
     activo: { type: Boolean, default: true }, // se pueden asignar licencias
     publicado: { type: Boolean, default: true }, // se muestra en la página
+    // true = se instala en el servidor VIMOD CONTROL (sistema de empresa); false = solo enlace externo.
+    // Sin valor (softwares antiguos): se decide en el panel según si tiene planes.
+    enServidor: { type: Boolean },
     orden: { type: Number, default: 0 }
   },
   { timestamps: true }
