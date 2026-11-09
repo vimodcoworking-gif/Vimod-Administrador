@@ -420,6 +420,10 @@ async function formEmpresa({ licenciaId } = {}) {
   const vence = lic?.fechaVencimiento ? aInput(lic.fechaVencimiento) : sumarMeses(hoy(), lic?.periodo === 'mes' ? 1 : 12);
   const plan = lic?.periodo === 'mes' ? 'mensual' : lic?.periodo === 'año' ? 'anual' : 'anual';
   const nombre = u?.empresa || u?.nombre || '';
+  // Softwares del catálogo: elegir uno solo da acceso por enlace (crea la licencia, no un sistema en el servidor).
+  const catalogo = u ? (sistemas.length ? sistemas : await cargarSistemas()).filter((s) => s.activo !== false) : [];
+  const opcLicencias = opciones(licencias.map((l) => [l._id, `${l.sistemaNombre} · ${l.planNombre}${l.fechaVencimiento ? ' · vence ' + fechaDia(l.fechaVencimiento) : ''}`]), licenciaId || '');
+  const opcCatalogo = opciones(catalogo.map((s) => ['enlace:' + s._id, `${s.nombre}`]), '');
   abrirModal(`
     <span class="etiqueta">Servidor VIMOD CONTROL</span>
     <h2 class="titulo">Crear sistema <strong>de empresa</strong></h2>
@@ -427,10 +431,12 @@ async function formEmpresa({ licenciaId } = {}) {
     <form class="form" id="formEmpresa">
       ${u ? `<input type="hidden" name="usuario" value="${esc(u._id)}">`
         : `<div class="campo"><label>Cliente</label><select name="usuario"><option value="">(sin cliente, vincular después)</option>${opciones(usuarios.map((x) => [x._id, `${x.nombre} · ${x.email}`]), '')}</select></div>`}
-      ${u ? `<div class="campo"><label>Licencia vinculada (renovarla renueva el sistema)</label><select name="licencia">
-          <option value="">(ninguna)</option>${opciones(licencias.map((l) => [l._id, `${l.sistemaNombre} · ${l.planNombre}${l.fechaVencimiento ? ' · vence ' + fechaDia(l.fechaVencimiento) : ''}`]), licenciaId || '')}</select>
-          <small class="ayuda">Para softwares que solo se usan por enlace no hace falta crear un sistema: basta con asignar la licencia.</small></div>` : ''}
-      <div class="form__fila">
+      ${u ? `<div class="campo"><label>Licencia vinculada (renovarla renueva el sistema)</label><select name="licencia" data-cambio="licencia-empresa">
+          <option value="">(ninguna)</option>
+          ${opcLicencias ? `<optgroup label="Crear sistema en el servidor con su licencia">${opcLicencias}</optgroup>` : ''}
+          ${opcCatalogo ? `<optgroup label="Solo dar acceso por enlace (no crea sistema)">${opcCatalogo}</optgroup>` : ''}</select>
+          <small class="ayuda" data-ayuda-enlace hidden>Solo se crea la licencia: el cliente verá la tarjeta del sistema con su enlace de acceso. No se crea nada en este servidor.</small></div>` : ''}
+      <div class="form__fila" data-solo-servidor>
         <div class="campo"><label>Nombre de la empresa</label><input name="nombre" required maxlength="150" value="${esc(nombre)}" data-slug-origen></div>
         <div class="campo"><label>Código (en la dirección)</label><input name="slug" required maxlength="24" pattern="[a-z0-9-]+" value="${esc(slugDe(nombre))}" data-slug>
           <small class="ayuda">Minúsculas, números y guiones. No se puede cambiar después.</small></div>
@@ -439,9 +445,9 @@ async function formEmpresa({ licenciaId } = {}) {
         <div class="campo"><label>Vence</label><input name="vence" type="date" required value="${vence}"></div>
         <div class="campo"><label>Plan</label><select name="plan">${opciones([['mensual', 'Mensual'], ['anual', 'Anual'], ['pago unico', 'Pago único']], plan)}</select></div>
       </div>
-      <div class="campo"><label>Almacenamiento para sus archivos</label><select name="almacenamientoGb">${opciones(OPCIONES_GB, 10)}</select>
+      <div class="campo" data-solo-servidor><label>Almacenamiento para sus archivos</label><select name="almacenamientoGb">${opciones(OPCIONES_GB, 10)}</select>
         <small class="ayuda">Al llegar al límite no podrán subir más archivos. Se puede cambiar después.</small></div>
-      <div class="form__fila form__fila--3">
+      <div class="form__fila form__fila--3" data-solo-servidor>
         <div class="campo"><label>Usuario admin</label><input name="adminUsuario" value="admin" maxlength="40"></div>
         <div class="campo"><label>Nombre del admin</label><input name="adminNombre" maxlength="120" value="${esc(u?.nombre || '')}"></div>
         <div class="campo"><label>Correo del admin</label><input name="adminEmail" type="email" maxlength="160" value="${esc(u?.email || '')}"></div>
@@ -450,6 +456,18 @@ async function formEmpresa({ licenciaId } = {}) {
       <p class="estado" role="status"></p>
     </form>`,
   async (datos) => {
+    if (datos.licencia?.startsWith('enlace:')) {
+      // Software externo: solo la licencia (tarjeta + enlace en la cuenta del cliente).
+      const s = sistemaPorId(datos.licencia.slice(7));
+      await api('/licencias', { method: 'POST', body: {
+        usuario: u._id, sistema: s._id, plan: s.planes?.[0]?.codigo || 'personalizado',
+        periodo: { mensual: 'mes', anual: 'año', 'pago unico': 'pago único' }[datos.plan] || '',
+        fechaInicio: hoy(), fechaVencimiento: datos.vence, estado: 'activa', maxUsuarios: s.planes?.[0]?.maxUsuarios ?? '',
+      } });
+      cerrarModal();
+      aviso(`Acceso a ${s.nombre} asignado: el cliente ya ve la tarjeta con su enlace.`);
+      return recargar();
+    }
     if (!u && !datos.usuario) delete datos.usuario;
     if (!datos.licencia) delete datos.licencia;
     await api('/empresas', { method: 'POST', body: datos });
@@ -1355,6 +1373,16 @@ document.addEventListener('change', async (e) => {
     } catch (err) {
       aviso(err.message, true);
     }
+  }
+  if (el.dataset.cambio === 'licencia-empresa') {
+    // Acceso por enlace: se ocultan (y desactivan) los datos del sistema en el servidor.
+    const enlace = el.value.startsWith('enlace:');
+    el.form.querySelectorAll('[data-solo-servidor]').forEach((b) => {
+      b.hidden = enlace;
+      b.querySelectorAll('input, select').forEach((c) => (c.disabled = enlace));
+    });
+    $('[data-ayuda-enlace]', el.form).hidden = !enlace;
+    $('button[type=submit]', el.form).textContent = enlace ? 'Dar acceso' : 'Crear sistema';
   }
   if (el.dataset.cambio === 'sistema-licencia') {
     const s = sistemaPorId(el.value);
