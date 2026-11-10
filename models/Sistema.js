@@ -15,6 +15,17 @@ const PlanSchema = new mongoose.Schema(
   { _id: false }
 );
 
+// Video de capacitación: lo ven los clientes con licencia activa del software.
+const VideoSchema = new mongoose.Schema(
+  {
+    titulo: { type: String, required: true, trim: true, maxlength: 120 },
+    url: { type: String, required: true, trim: true, maxlength: 500 }, // YouTube, Vimeo, Google Drive o .mp4
+    para: { type: String, enum: ["admin", "usuarios"], default: "usuarios" }, // administrador del sistema o usuarios
+    descripcion: { type: String, trim: true, maxlength: 300 }
+  },
+  { _id: false }
+);
+
 // Software que VIMOD vende: se muestra en la web ("Nuestros softwares" y planes)
 // y se asigna a los clientes mediante licencias.
 const SistemaSchema = new mongoose.Schema(
@@ -29,6 +40,7 @@ const SistemaSchema = new mongoose.Schema(
     url: { type: String, trim: true, maxlength: 300 }, // enlace de acceso al sistema para clientes
     textoPlanes: { type: String, trim: true, maxlength: 400 },
     planes: [PlanSchema],
+    capacitacion: [VideoSchema], // videos de capacitación
     activo: { type: Boolean, default: true }, // se pueden asignar licencias
     publicado: { type: Boolean, default: true }, // se muestra en la página
     // true = se instala en el servidor VIMOD CONTROL (sistema de empresa); false = solo enlace externo.

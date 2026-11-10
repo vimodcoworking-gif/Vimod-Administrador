@@ -638,6 +638,26 @@ const campoImagen = (nombre, valor, etiqueta = 'Imagen') => `
 
 const ayudaNegrita = '<small class="ayuda">Escribe *entre asteriscos* lo que quieras en negrita.</small>';
 
+function videoEditor(v = {}) {
+  return `
+    <fieldset class="repetible video-editor">
+      <div class="repetible__cabecera">
+        <b>${esc(v.titulo || 'Nuevo video')}</b>
+        <div class="acciones">
+          <button type="button" class="btn btn--borde btn--chico" data-accion="subir" title="Mover antes">↑</button>
+          <button type="button" class="btn btn--borde btn--chico" data-accion="bajar" title="Mover después">↓</button>
+          <button type="button" class="btn btn--peligro btn--chico" data-accion="quitar">Quitar</button>
+        </div>
+      </div>
+      <div class="form__fila">
+        <div class="campo"><label>Título</label><input data-campo="titulo" required maxlength="120" value="${esc(v.titulo)}" placeholder="Primeros pasos"></div>
+        <div class="campo"><label>Para</label><select data-campo="para">${opciones([['admin', 'El administrador'], ['usuarios', 'Los usuarios']], v.para || 'usuarios')}</select></div>
+      </div>
+      <div class="campo"><label>Enlace del video</label><input data-campo="url" type="url" required maxlength="500" value="${esc(v.url)}" placeholder="https://www.youtube.com/watch?v=…"></div>
+      <div class="campo"><label>Descripción corta (opcional)</label><input data-campo="descripcion" maxlength="300" value="${esc(v.descripcion)}"></div>
+    </fieldset>`;
+}
+
 function planEditor(p = {}, usadas = 0) {
   return `
     <fieldset class="repetible plan-editor" data-codigo="${esc(p.codigo || '')}">
@@ -705,6 +725,14 @@ async function vistaSistema(id) {
         <datalist id="periodos"><option value="mes"><option value="año"><option value="trimestre"><option value="pago único"></datalist>
       </section>
 
+      <section class="editor__bloque">
+        <h2 class="subtitulo">Capacitación (videos)</h2>
+        <p class="texto-gris">Los ven solo los clientes con licencia activa de este software, en “Capacitación” de su cuenta.
+          Pega un enlace de YouTube, Vimeo, Google Drive (compartido con “cualquiera con el enlace”) o un archivo .mp4.</p>
+        <div class="repetibles" id="videosEditor">${(s.capacitacion || []).map(videoEditor).join('')}</div>
+        <button type="button" class="btn btn--borde" data-accion="agregar-video">+ Agregar video</button>
+      </section>
+
       <div class="editor__pie">
         <button class="btn" type="submit">${nuevo ? 'Crear software' : 'Guardar cambios'}</button>
         <p class="estado" role="status"></p>
@@ -721,6 +749,10 @@ function leerSistema(form) {
     titulo: v('titulo'), descripcion: v('descripcion'), resumen: v('resumen'), imagen: v('imagen'),
     caracteristicas: v('caracteristicas').split('\n'),
     textoPlanes: v('textoPlanes'),
+    capacitacion: $$('.video-editor', form).map((f) => {
+      const c = (n) => $(`[data-campo="${n}"]`, f).value;
+      return { titulo: c('titulo'), url: c('url'), para: c('para'), descripcion: c('descripcion') };
+    }),
     planes: $$('.plan-editor', form).map((f) => {
       const c = (n) => $(`[data-campo="${n}"]`, f);
       return {
@@ -1327,6 +1359,7 @@ const acciones = {
   'eliminar-licencia': (el) => confirmarYBorrar('¿Eliminar esta licencia? El cliente dejará de verla.', '/licencias/' + el.dataset.id, 'Licencia eliminada'),
   'eliminar-sistema': (el) => confirmarYBorrar(`¿Eliminar "${el.dataset.nombre}"? Desaparecerá de la página.`, '/sistemas/' + el.dataset.id, 'Software eliminado'),
   'agregar-plan': () => agregarRepetible($('#planesEditor'), planEditor()),
+  'agregar-video': () => agregarRepetible($('#videosEditor'), videoEditor()),
   'agregar-cifra': () => agregarRepetible($('[data-lista="cifras"]'), cifraEditor()),
   'agregar-proyecto': () => agregarRepetible($('[data-lista="items"]'), proyectoEditor()),
   'agregar-imagen-proyecto': (el) =>

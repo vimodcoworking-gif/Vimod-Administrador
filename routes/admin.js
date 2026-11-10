@@ -545,6 +545,16 @@ function datosSistema(body) {
   if (body.activo !== undefined) d.activo = !!body.activo;
   if (body.publicado !== undefined) d.publicado = !!body.publicado;
   if (body.enServidor !== undefined) d.enServidor = !!body.enServidor;
+  if (body.capacitacion !== undefined) {
+    d.capacitacion = arr(body.capacitacion).slice(0, 60)
+      .map((v) => ({
+        titulo: txt(v.titulo, 120),
+        url: /^https?:\/\//i.test(txt(v.url)) ? txt(v.url, 500) : '',
+        para: v.para === 'admin' ? 'admin' : 'usuarios',
+        descripcion: txt(v.descripcion, 300)
+      }))
+      .filter((v) => v.titulo && v.url);
+  }
   if (body.orden !== undefined) d.orden = Number(body.orden) || 0;
   return d;
 }
